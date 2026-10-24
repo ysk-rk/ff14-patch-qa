@@ -17,6 +17,11 @@ MAX_CHARS = 1500
 
 # 見出しの階層の数（大分類・中分類・項目・ジョブ名など・その下）
 HEADING_DEPTH = 5
+
+# この階層以上の見出しは、下に本文がなくても見出しの文を本文として残す
+# （「分解スキルの上限値が 720 → 740 に引き上げられます」のように、見出しだけで完結する項目があるため）
+KEEP_EMPTY_FROM_LEVEL = 2
+
 BLOCK_TAGS = {"p", "div", "li", "ul", "ol", "dl", "dt", "dd", "section", "br"}
 SKIP_TAGS = {"script", "style", "noscript", "img"}
 
@@ -72,15 +77,34 @@ class Walker:
         self.path = [""] * HEADING_DEPTH
         self.blocks: list[Block] = []
         self.buffer: list[str] = []
+        # 直前の見出しの階層と、その見出しの下に本文や表が出てきたか
+        self.last_level: int | None = None
+        self.has_content = True
 
     def headings(self) -> tuple[str, ...]:
         return tuple(h for h in self.path if h)
+
+    def add(self, block: Block) -> None:
+        self.blocks.append(block)
+        self.has_content = True
 
     def flush(self) -> None:
         text = " ".join(self.buffer).strip()
         self.buffer = []
         if text:
-            self.blocks.append(Block(self.headings(), "text", text))
+            self.add(Block(self.headings(), "text", text))
+
+    def keep_empty_heading(self) -> None:
+        """直前の見出しの下に何もなければ、見出しの文を本文として残す。"""
+        if self.has_content or self.last_level is None:
+            return
+        if self.last_level >= KEEP_EMPTY_FROM_LEVEL:
+            self.add(Block(self.headings(), "text", self.path[self.last_level]))
+
+    def finish(self) -> None:
+        """本文を読み終えたときに呼ぶ。"""
+        self.flush()
+        self.keep_empty_heading()
 
     def walk(self, node: Tag) -> None:
         for child in node.children:
@@ -97,15 +121,18 @@ class Walker:
             level = heading_level(child)
             if level is not None:
                 self.flush()
+                self.keep_empty_heading()
                 self.path[level] = child.get_text(" ", strip=True)
                 # 自分より下の階層の見出しは、新しい見出しが来たらリセットする
                 for i in range(level + 1, HEADING_DEPTH):
                     self.path[i] = ""
+                self.last_level = level
+                self.has_content = False
             elif child.name == "table":
                 self.flush()
                 markdown = table_to_markdown(child)
                 if markdown:
-                    self.blocks.append(Block(self.headings(), "table", markdown))
+                    self.add(Block(self.headings(), "table", markdown))
             else:
                 is_block = child.name in BLOCK_TAGS
                 if is_block:
@@ -176,7 +203,7 @@ def main() -> None:
 
             walker = Walker()
             walker.walk(wrapper)
-            walker.flush()
+            walker.finish()
 
             count = tables = longest = 0
             for i, (headings, text, has_table) in enumerate(make_chunks(walker.blocks)):
