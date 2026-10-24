@@ -44,7 +44,7 @@ PROMPT = """あなたは FINAL FANTASY XIV のパッチノートに詳しいア�
 
 embedder = SentenceTransformer(EMBEDDING_MODEL)
 collection = chromadb.PersistentClient(path=str(DB_DIR)).get_collection(COLLECTION)
-client = genai. Client(api_key=os.environ["GEMINI_API_KEY"])
+client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 
 class LLMUnavailableError(Exception):
@@ -69,10 +69,10 @@ def search(question: str) -> list[dict]:
     return sorted(hits, key=lambda h: h["order"])
 
 
-def generate(prompt: str) -> tuple[str, str]:
-    """LLM_MODELS を先頭から順に試し、(回答, 使ったモデル名) を返す。"""
+def generate(prompt: str, models: list[str] | None = None) -> tuple[str, str]:
+    """models（省略時は LLM_MODELS）を先頭から順に試し、(回答, 使ったモデル名) を返す。"""
     failures = []
-    for model in LLM_MODELS:
+    for model in models or LLM_MODELS:
         try:
             response = client.models.generate_content(model=model, contents=prompt)
             return response.text, model
@@ -83,11 +83,11 @@ def generate(prompt: str) -> tuple[str, str]:
     raise LLMUnavailableError("、".join(failures))
 
 
-def answer(question: str) -> dict:
+def answer(question: str, models: list[str] | None = None) -> dict:
     hits = search(question)
     context = "\n\n---\n\n".join(hit["text"] for hit in hits)
 
-    text, model = generate(PROMPT.format(context=context, question=question))
+    text, model = generate(PROMPT.format(context=context, question=question), models)
 
     return {
         "answer": text,
