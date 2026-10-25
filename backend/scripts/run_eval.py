@@ -3,6 +3,7 @@
 使い方:
   python scripts\\run_eval.py                                  いつもどおり（混雑時は予備のモデル）
   python scripts\\run_eval.py --model gemini-3.5-flash-lite    使うモデルを1つに固定する
+  python scripts\\run_eval.py --prompt v2                      使うプロンプトを選ぶ（省略時は v1）
 """
 
 import argparse
@@ -18,7 +19,7 @@ BACKEND = Path(__file__).resolve().parents[1]
 ROOT = BACKEND.parent
 sys.path.insert(0, str(BACKEND))
 
-from app.rag import TOP_K, LLMUnavailableError, answer, search  # noqa: E402
+from app.rag import DEFAULT_PROMPT, PROMPTS, TOP_K, LLMUnavailableError, answer, search  # noqa: E402
 
 QUESTIONS = ROOT / "eval" / "questions.jsonl"
 RESULTS_DIR = ROOT / "eval" / "results"
@@ -32,6 +33,9 @@ RETRIES = 3
 
 # 検索の再現率を測る順位（上位何件までに入っていれば合格とするか）
 RECALL_AT = (3, TOP_K)
+
+# 回答にこの印で始まる行があれば、その行だけを採点する（経緯に書かれた古い値で◯にしないため）
+CURRENT_VALUE_MARK = "【今の値】"
 
 PVP = re.compile(r"PvP|フロントライン|クリスタルコンフリクト")
 UNKNOWN_PHRASES = (
@@ -53,6 +57,14 @@ def contains_value(text: str, expected: str) -> bool:
     """回答に正解の数字が入っているか。「7.2」が「7.25」に一致しないよう前後も見る。"""
     pattern = rf"(?<![\d.]){re.escape(normalize(expected))}(?!\d)"
     return re.search(pattern, normalize(text)) is not None
+
+
+def graded_part(text: str) -> str:
+    """採点する部分。【今の値】の行があればその行だけ、なければ回答全体。"""
+    for line in text.splitlines():
+        if CURRENT_VALUE_MARK in line:
+            return line
+    return text
 
 
 def is_pvp(hit: dict) -> bool:
@@ -94,14 +106,14 @@ def grade(question: dict, text: str) -> bool | None:
         return any(p in text for p in UNKNOWN_PHRASES)
     if question["kind"] == "history":
         return None
-    return contains_value(text, question["expected"])
+    return contains_value(graded_part(text), question["expected"])
 
 
-def ask_with_retry(question: str, models: list[str] | None) -> dict:
+def ask_with_retry(question: str, models: list[str] | None, prompt: str) -> dict:
     """混雑していたら待って再試行する。"""
     for attempt in range(1, RETRIES + 1):
         try:
-            return answer(question, models)
+            return answer(question, models, prompt)
         except LLMUnavailableError as e:
             if attempt == RETRIES:
                 raise
@@ -155,6 +167,7 @@ def summarize(records: list[dict]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", help="使うモデルを1つに固定する")
+    parser.add_argument("--prompt", default=DEFAULT_PROMPT, choices=sorted(PROMPTS), help="使うプロンプト")
     args = parser.parse_args()
     models = [args.model] if args.model else None
 
@@ -166,7 +179,7 @@ def main() -> None:
         ranks = evidence_ranks(q, hits)
 
         try:
-            result = ask_with_retry(q["question"], models)
+            result = ask_with_retry(q["question"], models, args.prompt)
             text, model, error = result["answer"], result["model"], None
             correct = grade(q, text)
         except LLMUnavailableError as e:
@@ -181,6 +194,7 @@ def main() -> None:
                 "question": q["question"],
                 "expected": q["expected"],
                 "model": model,
+                "prompt": args.prompt,
                 "correct": correct,
                 "ranks": ranks,
                 "retrieved": [
@@ -199,11 +213,12 @@ def main() -> None:
         if i < len(questions):
             time.sleep(WAIT_SECONDS)
 
+    print(f"\nプロンプト: {args.prompt}")
     summarize(records)
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M")
-    output = RESULTS_DIR / f"{stamp}_{args.model or 'default'}.jsonl"
+    output = RESULTS_DIR / f"{stamp}_{args.model or 'default'}_{args.prompt}.jsonl"
     with output.open("w", encoding="utf-8") as f:
         for r in records:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
