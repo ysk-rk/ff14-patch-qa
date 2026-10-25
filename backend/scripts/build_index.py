@@ -1,6 +1,7 @@
 """チャンクを埋め込みモデルでベクトルに変え、Chroma に保存する。"""
 
 import json
+import re
 from pathlib import Path
 
 import chromadb
@@ -17,6 +18,9 @@ MODEL_NAME = "intfloat/multilingual-e5-small"
 # e5 系のモデルは、文書に「passage: 」、質問に「query: 」を付けて使う決まりがある
 PASSAGE_PREFIX = "passage: "
 QUERY_PREFIX = "query: "
+
+# 見出しにこれらの言葉が入っているチャンクを PvP として扱う
+PVP = re.compile(r"PvP|フロントライン|クリスタルコンフリクト")
 
 BATCH_SIZE = 500
 
@@ -55,12 +59,14 @@ def main() -> None:
                     "url": c["url"],
                     "has_table": c["has_table"],
                     "headings": " > ".join(c["headings"]),
+                    "is_pvp": bool(PVP.search(" > ".join(c["headings"]))),
                 }
                 for c in batch
             ],
         )
 
-    print(f"完了: {collection.count()} 件 → {DB_DIR}")
+    pvp = sum(1 for c in chunks if PVP.search(" > ".join(c["headings"])))
+    print(f"完了: {collection.count()} 件（うち PvP {pvp} 件） → {DB_DIR}")
 
 
 if __name__ == "__main__":

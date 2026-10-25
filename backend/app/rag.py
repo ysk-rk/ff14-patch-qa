@@ -1,6 +1,7 @@
 """検索したチャンクを Gemini に渡して、出典付きの回答を作る。"""
 
 import os
+import re
 from pathlib import Path
 
 import chromadb
@@ -27,6 +28,9 @@ RETRYABLE_CODES = {429, 500, 503}
 # 検索の順位がまだ不安定なので、多めに取って AI に渡す
 TOP_K = 8
 
+# 質問にこれらの言葉が入っていれば PvP の質問として扱う
+PVP_WORDS = re.compile(r"PvP|フロントライン|クリスタルコンフリクト")
+
 PROMPT = """あなたは FINAL FANTASY XIV のパッチノートに詳しいアシスタントです。
 以下の「資料」だけを使って、質問に日本語で答えてください。
 
@@ -44,7 +48,7 @@ PROMPT = """あなたは FINAL FANTASY XIV のパッチノートに詳しいア�
 
 embedder = SentenceTransformer(EMBEDDING_MODEL)
 collection = chromadb.PersistentClient(path=str(DB_DIR)).get_collection(COLLECTION)
-client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+client = genai. Client(api_key=os.environ["GEMINI_API_KEY"])
 
 
 class LLMUnavailableError(Exception):
@@ -52,11 +56,15 @@ class LLMUnavailableError(Exception):
 
 
 def search(question: str) -> list[dict]:
-    """質問に近いチャンクを TOP_K 件取り、パッチの古い順に並べて返す。"""
+    """質問に近いチャンクを TOP_K 件取り、パッチの古い順に並べて返す。
+
+    PvP の質問なら PvP のチャンクだけ、それ以外なら PvP 以外のチャンクだけを検索する。
+    """
     embedding = embedder.encode(QUERY_PREFIX + question, normalize_embeddings=True)
     result = collection.query(
         query_embeddings=[embedding.tolist()],
         n_results=TOP_K,
+        where={"is_pvp": bool(PVP_WORDS.search(question))},
         include=["documents", "metadatas", "distances"],
     )
     hits = [
