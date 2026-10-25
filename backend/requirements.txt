@@ -6,3 +6,4 @@ google-genai
 fastapi
 uvicorn[standard]
 python-dotenv
+rank-bm25

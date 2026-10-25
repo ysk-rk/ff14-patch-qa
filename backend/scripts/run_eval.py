@@ -3,7 +3,9 @@
 使い方:
   python scripts\\run_eval.py                                  いつもどおり（混雑時は予備のモデル）
   python scripts\\run_eval.py --model gemini-3.5-flash-lite    使うモデルを1つに固定する
-  python scripts\\run_eval.py --prompt v2                      使うプロンプトを選ぶ（省略時は v1）
+  python scripts\\run_eval.py --prompt v2                      使うプロンプトを選ぶ
+  python scripts\\run_eval.py --search hybrid                  検索のしかたを選ぶ（vector / hybrid）
+  python scripts\\run_eval.py --search hybrid --search-only    AI を使わずに検索だけを測る
 """
 
 import argparse
@@ -19,7 +21,16 @@ BACKEND = Path(__file__).resolve().parents[1]
 ROOT = BACKEND.parent
 sys.path.insert(0, str(BACKEND))
 
-from app.rag import DEFAULT_PROMPT, PROMPTS, TOP_K, LLMUnavailableError, answer, search  # noqa: E402
+from app.rag import (  # noqa: E402
+    DEFAULT_PROMPT,
+    DEFAULT_SEARCH,
+    PROMPTS,
+    SEARCH_MODES,
+    TOP_K,
+    LLMUnavailableError,
+    answer,
+    search,
+)
 
 QUESTIONS = ROOT / "eval" / "questions.jsonl"
 RESULTS_DIR = ROOT / "eval" / "results"
@@ -72,14 +83,13 @@ def is_pvp(hit: dict) -> bool:
 
 
 def evidence_ranks(question: dict, hits: list[dict]) -> dict[str, int | None] | None:
-    """正解に必要なパッチごとに、そのチャンクが近さの順で何位だったか（拾えなければ None）。"""
+    """正解に必要なパッチごとに、そのチャンクが検索で何位だったか（拾えなければ None）。"""
     needed = question["evidence_versions"]
     if not needed:
         return None
 
-    ranked = sorted(hits, key=lambda h: h["score"], reverse=True)
     ranks: dict[str, int | None] = {v: None for v in needed}
-    for rank, hit in enumerate(ranked, start=1):
+    for hit in sorted(hits, key=lambda h: h["rank"]):
         version = hit["version"]
         if version not in ranks or ranks[version] is not None:
             continue
@@ -89,7 +99,7 @@ def evidence_ranks(question: dict, hits: list[dict]) -> dict[str, int | None] | 
             continue
         if question["mode"] == "pvp" and not is_pvp(hit):
             continue
-        ranks[version] = rank
+        ranks[version] = hit["rank"]
     return ranks
 
 
@@ -109,11 +119,11 @@ def grade(question: dict, text: str) -> bool | None:
     return contains_value(graded_part(text), question["expected"])
 
 
-def ask_with_retry(question: str, models: list[str] | None, prompt: str) -> dict:
+def ask_with_retry(question: str, models: list[str] | None, prompt: str, search_mode: str) -> dict:
     """混雑していたら待って再試行する。"""
     for attempt in range(1, RETRIES + 1):
         try:
-            return answer(question, models, prompt)
+            return answer(question, models, prompt, search_mode)
         except LLMUnavailableError as e:
             if attempt == RETRIES:
                 raise
@@ -160,7 +170,7 @@ def summarize(records: list[dict]) -> None:
 
     models: dict[str, int] = defaultdict(int)
     for r in records:
-        models[r["model"] or "エラー"] += 1
+        models[r["model"] or "なし"] += 1
     print("\n回答したモデル: " + "、".join(f"{m} {n}問" for m, n in models.items()))
 
 
@@ -168,6 +178,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", help="使うモデルを1つに固定する")
     parser.add_argument("--prompt", default=DEFAULT_PROMPT, choices=sorted(PROMPTS), help="使うプロンプト")
+    parser.add_argument("--search", default=DEFAULT_SEARCH, choices=SEARCH_MODES, help="検索のしかた")
+    parser.add_argument("--search-only", action="store_true", help="AI を使わずに検索だけを測る")
     args = parser.parse_args()
     models = [args.model] if args.model else None
 
@@ -175,17 +187,19 @@ def main() -> None:
     records = []
 
     for i, q in enumerate(questions, start=1):
-        hits = search(q["question"])
+        hits = search(q["question"], args.search)
         ranks = evidence_ranks(q, hits)
 
-        try:
-            result = ask_with_retry(q["question"], models, args.prompt)
-            text, model, error = result["answer"], result["model"], None
-            correct = grade(q, text)
-        except LLMUnavailableError as e:
-            text, model, error, correct = "", None, str(e), None
+        text, model, error, correct = "", None, None, None
+        if not args.search_only:
+            try:
+                result = ask_with_retry(q["question"], models, args.prompt, args.search)
+                text, model = result["answer"], result["model"]
+                correct = grade(q, text)
+            except LLMUnavailableError as e:
+                error = str(e)
 
-        ranked = sorted(hits, key=lambda h: h["score"], reverse=True)
+        ranked = sorted(hits, key=lambda h: h["rank"])
         records.append(
             {
                 "id": q["id"],
@@ -194,31 +208,37 @@ def main() -> None:
                 "question": q["question"],
                 "expected": q["expected"],
                 "model": model,
-                "prompt": args.prompt,
+                "prompt": None if args.search_only else args.prompt,
+                "search": args.search,
                 "correct": correct,
                 "ranks": ranks,
                 "retrieved": [
-                    f"{n}:{h['version']}({'PvP' if is_pvp(h) else 'PvE'})"
-                    for n, h in enumerate(ranked, start=1)
+                    f"{h['rank']}:{h['version']}({'PvP' if is_pvp(h) else 'PvE'})" for h in ranked
                 ],
                 "answer": text,
                 "error": error,
             }
         )
 
+        answer_label = "" if args.search_only else f"回答 {mark(correct)}  "
+        model_label = "" if args.search_only else f"  {model or 'エラー'}"
         print(
-            f"[{i:>2}/{len(questions)}] {q['id']}  回答 {mark(correct)}  正解の順位 {format_ranks(ranks):<6}"
-            f"  {model or 'エラー'}  {q['question']}"
+            f"[{i:>2}/{len(questions)}] {q['id']}  {answer_label}正解の順位 {format_ranks(ranks):<6}"
+            f"{model_label}  {q['question']}"
         )
-        if i < len(questions):
+        if not args.search_only and i < len(questions):
             time.sleep(WAIT_SECONDS)
 
-    print(f"\nプロンプト: {args.prompt}")
+    print(f"\n検索: {args.search}" + ("" if args.search_only else f"  プロンプト: {args.prompt}"))
     summarize(records)
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M")
-    output = RESULTS_DIR / f"{stamp}_{args.model or 'default'}_{args.prompt}.jsonl"
+    if args.search_only:
+        label = f"search-only_{args.search}"
+    else:
+        label = f"{args.model or 'default'}_{args.prompt}_{args.search}"
+    output = RESULTS_DIR / f"{stamp}_{label}.jsonl"
     with output.open("w", encoding="utf-8") as f:
         for r in records:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")

@@ -1,13 +1,17 @@
 """検索したチャンクを Gemini に渡して、出典付きの回答を作る。"""
 
+import json
 import os
 import re
+from collections import defaultdict
 from pathlib import Path
 
 import chromadb
+import numpy as np
 from dotenv import load_dotenv
 from google import genai
 from google.genai import errors, types
+from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,6 +23,9 @@ COLLECTION = "patch_notes"
 EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
 QUERY_PREFIX = "query: "
 
+# キーワード検索に使うチャンク（scripts/extract_chunks.py が作るもの）
+CHUNKS = ROOT / "data" / "processed" / "chunks.jsonl"
+
 # 無料枠で使える Gemini のモデル。先頭から順に試し、混雑していたら次のモデルを使う
 LLM_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
 
@@ -28,8 +35,22 @@ RETRYABLE_CODES = {429, 500, 503}
 # 答えのランダムさ。0 にすると、同じ質問には毎回なるべく同じ答えを返す
 TEMPERATURE = 0
 
-# 検索の順位がまだ不安定なので、多めに取って AI に渡す
+# AI に渡す資料の件数
 TOP_K = 8
+
+# 検索のしかた
+#   vector: 意味の近さだけで選ぶ
+#   hybrid: 意味の近さとキーワードの一致の両方で選ぶ
+SEARCH_MODES = ("vector", "hybrid")
+
+# 画面（API）で使う検索のしかた。評価で効果を確かめてから切り替える
+DEFAULT_SEARCH = "vector"
+
+# hybrid のとき、それぞれの検索で候補にする件数
+CANDIDATES = 30
+
+# hybrid で2つの順位を合わせるときの定数（RRF でよく使われる値）
+RRF_K = 60
 
 # 質問にこれらの言葉が入っていれば PvP の質問として扱う
 PVP_WORDS = re.compile(r"PvP|フロントライン|クリスタルコンフリクト")
@@ -80,8 +101,30 @@ PROMPTS = {
 # 画面（API）で使うプロンプト。評価で効果を確かめてから切り替える
 DEFAULT_PROMPT = "v2"
 
+
+def is_pvp_chunk(chunk: dict) -> bool:
+    return bool(PVP_WORDS.search(" > ".join(chunk["headings"])))
+
+
+def bigrams(text: str) -> list[str]:
+    """日本語は単語の区切りがないため、2文字ずつに区切ってキーワード検索に使う。"""
+    text = re.sub(r"\s+", "", text)
+    return [text[i : i + 2] for i in range(len(text) - 1)]
+
+
+def build_keyword_indexes() -> dict[bool, tuple[list[str], BM25Okapi]]:
+    """PvP と PvP 以外に分けて、キーワード検索（BM25）の索引を作る。"""
+    chunks = [json.loads(line) for line in CHUNKS.open(encoding="utf-8")]
+    indexes = {}
+    for pvp in (True, False):
+        group = [c for c in chunks if is_pvp_chunk(c) == pvp]
+        indexes[pvp] = ([c["id"] for c in group], BM25Okapi([bigrams(c["text"]) for c in group]))
+    return indexes
+
+
 embedder = SentenceTransformer(EMBEDDING_MODEL)
 collection = chromadb.PersistentClient(path=str(DB_DIR)).get_collection(COLLECTION)
+keyword_indexes = build_keyword_indexes()
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 
@@ -89,24 +132,61 @@ class LLMUnavailableError(Exception):
     """すべてのモデルが混雑などで使えなかったときのエラー。"""
 
 
-def search(question: str) -> list[dict]:
+def keyword_search(question: str, pvp: bool) -> list[str]:
+    """キーワードの一致で、上位 CANDIDATES 件のチャンクの ID を返す。"""
+    ids, index = keyword_indexes[pvp]
+    scores = index.get_scores(bigrams(question))
+    top = np.argsort(scores)[::-1][:CANDIDATES]
+    return [ids[i] for i in top]
+
+
+def search(question: str, mode: str = DEFAULT_SEARCH) -> list[dict]:
     """質問に近いチャンクを TOP_K 件取り、パッチの古い順に並べて返す。
 
     PvP の質問なら PvP のチャンクだけ、それ以外なら PvP 以外のチャンクだけを検索する。
+    各チャンクには、検索での順位（rank）と、意味の近さ（score）を付ける。
     """
+    pvp = bool(PVP_WORDS.search(question))
     embedding = embedder.encode(QUERY_PREFIX + question, normalize_embeddings=True)
-    result = collection.query(
+
+    vector = collection.query(
         query_embeddings=[embedding.tolist()],
-        n_results=TOP_K,
-        where={"is_pvp": bool(PVP_WORDS.search(question))},
-        include=["documents", "metadatas", "distances"],
+        n_results=CANDIDATES,
+        where={"is_pvp": pvp},
+        include=["distances"],
     )
-    hits = [
-        {"text": doc, **meta, "score": 1 - dist}
-        for doc, meta, dist in zip(
-            result["documents"][0], result["metadatas"][0], result["distances"][0]
+    vector_ids = vector["ids"][0]
+
+    if mode == "vector":
+        ids = vector_ids[:TOP_K]
+    else:
+        # 2つの検索の順位から点数を付けて足し合わせる（RRF）
+        fused: dict[str, float] = defaultdict(float)
+        for ranked in (vector_ids, keyword_search(question, pvp)):
+            for rank, chunk_id in enumerate(ranked, start=1):
+                fused[chunk_id] += 1 / (RRF_K + rank)
+        ids = sorted(fused, key=lambda i: fused[i], reverse=True)[:TOP_K]
+
+    got = collection.get(ids=ids, include=["documents", "metadatas", "embeddings"])
+    by_id = {
+        chunk_id: (doc, meta, emb)
+        for chunk_id, doc, meta, emb in zip(
+            got["ids"], got["documents"], got["metadatas"], got["embeddings"]
         )
-    ]
+    }
+
+    hits = []
+    for rank, chunk_id in enumerate(ids, start=1):
+        doc, meta, emb = by_id[chunk_id]
+        hits.append(
+            {
+                "id": chunk_id,
+                "text": doc,
+                **meta,
+                "score": float(np.dot(embedding, emb)),
+                "rank": rank,
+            }
+        )
     # 古い順に並べると、資料の中で変更の流れが追いやすくなる
     return sorted(hits, key=lambda h: h["order"])
 
@@ -129,8 +209,13 @@ def generate(prompt: str, models: list[str] | None = None) -> tuple[str, str]:
     raise LLMUnavailableError("、".join(failures))
 
 
-def answer(question: str, models: list[str] | None = None, prompt: str = DEFAULT_PROMPT) -> dict:
-    hits = search(question)
+def answer(
+    question: str,
+    models: list[str] | None = None,
+    prompt: str = DEFAULT_PROMPT,
+    search_mode: str = DEFAULT_SEARCH,
+) -> dict:
+    hits = search(question, search_mode)
     context = "\n\n---\n\n".join(hit["text"] for hit in hits)
 
     text, model = generate(PROMPTS[prompt].format(context=context, question=question), models)
@@ -139,6 +224,7 @@ def answer(question: str, models: list[str] | None = None, prompt: str = DEFAULT
         "answer": text,
         "model": model,
         "prompt": prompt,
+        "search": search_mode,
         "sources": [
             {
                 "version": hit["version"],
