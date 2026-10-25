@@ -1,0 +1,26 @@
+# push と pull request のたびに、backend の自動テストを流す
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-test.txt
+
+      # テストに必要なのは HTML の解析と pytest だけ（埋め込みモデルや Gemini は使わない）
+      - run: pip install -r requirements-test.txt
+
+      - run: python -m pytest -v
