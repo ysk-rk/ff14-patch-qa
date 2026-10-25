@@ -3,9 +3,10 @@
 使い方:
   python scripts\\run_eval.py                                  いつもどおり（混雑時は予備のモデル）
   python scripts\\run_eval.py --model gemini-3.5-flash-lite    使うモデルを1つに固定する
-  python scripts\\run_eval.py --prompt v2                      使うプロンプトを選ぶ
+  python scripts\\run_eval.py --prompt auto                    使うプロンプトを選ぶ
   python scripts\\run_eval.py --search hybrid                  検索のしかたを選ぶ（vector / hybrid）
   python scripts\\run_eval.py --search hybrid --search-only    AI を使わずに検索だけを測る
+  python scripts\\run_eval.py --questions ..\\eval\\test_questions.jsonl   使う質問のファイルを選ぶ
 """
 
 import argparse
@@ -187,10 +188,13 @@ def main() -> None:
     parser.add_argument("--prompt", default=DEFAULT_PROMPT, choices=sorted(PROMPTS), help="使うプロンプト")
     parser.add_argument("--search", default=DEFAULT_SEARCH, choices=SEARCH_MODES, help="検索のしかた")
     parser.add_argument("--search-only", action="store_true", help="AI を使わずに検索だけを測る")
+    parser.add_argument("--questions", default=str(QUESTIONS), help="使う質問のファイル")
     args = parser.parse_args()
     models = [args.model] if args.model else None
 
-    questions = [json.loads(line) for line in QUESTIONS.open(encoding="utf-8") if line.strip()]
+    questions_path = Path(args.questions)
+    with questions_path.open(encoding="utf-8") as f:
+        questions = [json.loads(line) for line in f if line.strip()]
     records = []
 
     for i, q in enumerate(questions, start=1):
@@ -236,16 +240,18 @@ def main() -> None:
         if not args.search_only and i < len(questions):
             time.sleep(WAIT_SECONDS)
 
-    print(f"\n検索: {args.search}" + ("" if args.search_only else f"  プロンプト: {args.prompt}"))
+    print(f"\n質問: {questions_path.name}  検索: {args.search}" + ("" if args.search_only else f"  プロンプト: {args.prompt}"))
     summarize(records)
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M")
+    # いつもの20問以外を使ったときは、ファイル名の先頭に質問のファイル名を付ける
+    prefix = "" if questions_path.resolve() == QUESTIONS.resolve() else f"{questions_path.stem}_"
     if args.search_only:
         label = f"search-only_{args.search}"
     else:
         label = f"{args.model or 'default'}_{args.prompt}_{args.search}"
-    output = RESULTS_DIR / f"{stamp}_{label}.jsonl"
+    output = RESULTS_DIR / f"{stamp}_{prefix}{label}.jsonl"
     with output.open("w", encoding="utf-8") as f:
         for r in records:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
