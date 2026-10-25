@@ -127,7 +127,11 @@ h2 {
   color: #fff;
 }
 
+/* 回答したモデル・プロンプト・検索のしかた（項目の間は CSS で空ける） */
 .meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
   margin: 12px 0 0;
   font-size: 0.8rem;
   color: #9aa4b2;

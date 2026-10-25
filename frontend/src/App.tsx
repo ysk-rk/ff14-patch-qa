@@ -154,9 +154,9 @@ function App() {
             )}
 
             <p className="meta">
-              モデル：{result.model}
-              {result.prompt && `　プロンプト：${result.prompt}`}
-              {result.search && `　検索：${result.search}`}
+              <span>モデル：{result.model}</span>
+              {result.prompt && <span>プロンプト：{result.prompt}</span>}
+              {result.search && <span>検索：{result.search}</span>}
             </p>
           </section>
 
