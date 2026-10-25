@@ -55,6 +55,13 @@ RRF_K = 60
 # 質問にこれらの言葉が入っていれば PvP の質問として扱う
 PVP_WORDS = re.compile(r"PvP|フロントライン|クリスタルコンフリクト")
 
+# auto のとき、これらの言葉が入った質問は「何が変わったか」「いつ変わったか」の質問として v1 で答える
+HISTORY_WORDS = re.compile(r"何が変わ|どう変わ|どう調整|変更点|変更内容|どのパッチ|いつ")
+
+# 【今の値】と【変更の経緯】の印
+CURRENT_MARK = "【今の値】"
+CHANGE_LINE = re.compile(r"^\s*[-・*]\s*パッチ\s*([\d.]+)\s*[:：]\s*(.+?)\s*→\s*(.+?)\s*$")
+
 RULES = """ルール:
 - 資料に書かれていないことは答えず、「パッチノートからは分かりませんでした」と答える
 - 同じ項目が複数のパッチで変更されている場合は、パッチ番号が一番新しいものを今の情報として答える
@@ -74,6 +81,7 @@ PROMPTS = {
 質問: {question}
 """,
     # v2: 数値の今の値を聞かれたら、変更の経緯を古い順に書き出してから答えさせる
+    # （「何が変わった？」の質問で「分かりませんでした」と答える失敗があった）
     "v2": """あなたは FINAL FANTASY XIV のパッチノートに詳しいアシスタントです。
 以下の「資料」だけを使って、質問に日本語で答えてください。
 
@@ -96,10 +104,51 @@ PROMPTS = {
 
 質問: {question}
 """,
+    # v3: 質問の種類を AI に決めさせ、種類ごとに答え方を指示する
+    # （q002 は直ったが、q009 と q011 の今の値を間違えるようになった）
+    "v3": """あなたは FINAL FANTASY XIV のパッチノートに詳しいアシスタントです。
+以下の「資料」だけを使って、質問に日本語で答えてください。
+
+ルール:
+- 「パッチノートからは分かりませんでした」と答えるのは、資料のどこにも、質問されたスキルや項目が出てこない場合だけにする。資料に出てくる場合は、分かる範囲で必ず答える
+- 資料に書かれていないことを、推測や自分の知識で補わない
+- PvE（通常のバトル）と PvP（見出しに「PvP」「フロントライン」などがあるもの）を区別する。質問に PvP と書かれていなければ PvE として答える
+- 答えの根拠にしたパッチ番号を必ず書く
+
+まず、質問が次のどれにあたるかを決める（決めた結果は書かなくてよい）。
+
+A. 数値の今の値を聞いている（例:「今の威力は？」「上限値はいくつ？」「減衰率は？」）
+B. 何が変わったか、変更の流れを聞いている（例:「何が変わった？」「どう調整された？」）
+C. いつ変わったかを聞いている（例:「どのパッチ？」「いつから？」）
+
+A の場合:
+1. 質問された項目を1つに決める（例: 威力なのか、2体目以降の威力減衰率なのか）
+2. 資料の中から、その項目が変わった箇所だけを、パッチの古い順に「パッチ番号: 変更前 → 変更後」の形で書き出す。1つの行に複数の変更が書かれている場合は、質問された項目の部分だけを取り出す
+3. 一番新しいパッチの「変更後」の値を、今の値とする
+4. 次の形で答える
+
+【今の値】（今の値）（根拠: パッチ〇〇）
+【変更の経緯】
+- パッチ〇〇: 〇〇 → 〇〇
+
+B の場合:
+質問されたスキルや項目の変更を、項目を問わずすべて、パッチの古い順に次の形で書く。
+- パッチ〇〇: （変更の内容）
+
+C の場合:
+変わったパッチの番号を答え、変更の内容を1文で添える。
+
+資料:
+{context}
+
+質問: {question}
+""",
+    # auto: 質問の種類をコードで決めて、v1 か v2 を使う（中身は choose_prompt を参照）
+    "auto": None,
 }
 
 # 画面（API）で使うプロンプト。評価で効果を確かめてから切り替える
-DEFAULT_PROMPT = "v2"
+DEFAULT_PROMPT = "auto"
 
 
 def is_pvp_chunk(chunk: dict) -> bool:
@@ -125,7 +174,7 @@ def build_keyword_indexes() -> dict[bool, tuple[list[str], BM25Okapi]]:
 embedder = SentenceTransformer(EMBEDDING_MODEL)
 collection = chromadb.PersistentClient(path=str(DB_DIR)).get_collection(COLLECTION)
 keyword_indexes = build_keyword_indexes()
-client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+client = genai. Client(api_key=os.environ["GEMINI_API_KEY"])
 
 
 class LLMUnavailableError(Exception):
@@ -191,6 +240,32 @@ def search(question: str, mode: str = DEFAULT_SEARCH) -> list[dict]:
     return sorted(hits, key=lambda h: h["order"])
 
 
+def choose_prompt(question: str) -> str:
+    """auto のときに使うプロンプトを、質問の言葉から決める。"""
+    return "v1" if HISTORY_WORDS.search(question) else "v2"
+
+
+def fix_current_value(text: str) -> str:
+    """【変更の経緯】の中で一番新しいパッチの「変更後」を、【今の値】に入れ直す。
+
+    AI が正しい経緯を書いたのに、今の値だけを間違えることがあるため、
+    最後の一歩はコードで決める。経緯が書かれていなければ、そのまま返す。
+    """
+    lines = text.splitlines()
+    changes = [m for line in lines if (m := CHANGE_LINE.match(line.replace("**", "")))]
+    if not changes:
+        return text
+
+    latest = max(changes, key=lambda m: float(m.group(1)))
+    current = f"{CURRENT_MARK}{latest.group(3)}（根拠: パッチ{latest.group(1)}）"
+
+    for i, line in enumerate(lines):
+        if CURRENT_MARK in line:
+            lines[i] = current
+            return "\n".join(lines)
+    return "\n".join([current, *lines])
+
+
 def generate(prompt: str, models: list[str] | None = None) -> tuple[str, str]:
     """models（省略時は LLM_MODELS）を先頭から順に試し、(回答, 使ったモデル名) を返す。"""
     failures = []
@@ -218,12 +293,17 @@ def answer(
     hits = search(question, search_mode)
     context = "\n\n---\n\n".join(hit["text"] for hit in hits)
 
-    text, model = generate(PROMPTS[prompt].format(context=context, question=question), models)
+    used = choose_prompt(question) if prompt == "auto" else prompt
+    text, model = generate(PROMPTS[used].format(context=context, question=question), models)
+
+    # auto のときだけ、今の値をコードで決め直す（v2 や v3 単体の評価には手を加えない）
+    if prompt == "auto":
+        text = fix_current_value(text)
 
     return {
         "answer": text,
         "model": model,
-        "prompt": prompt,
+        "prompt": f"auto({used})" if prompt == "auto" else used,
         "search": search_mode,
         "sources": [
             {

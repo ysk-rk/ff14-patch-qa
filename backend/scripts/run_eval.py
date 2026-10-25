@@ -78,6 +78,10 @@ def graded_part(text: str) -> str:
     return text
 
 
+def says_unknown(text: str) -> bool:
+    return any(p in text for p in UNKNOWN_PHRASES)
+
+
 def is_pvp(hit: dict) -> bool:
     return bool(PVP.search(hit["headings"]))
 
@@ -110,12 +114,15 @@ def recall_at(ranks: dict[str, int | None] | None, k: int) -> float | None:
     return sum(1 for r in ranks.values() if r is not None and r <= k) / len(ranks)
 
 
-def grade(question: dict, text: str) -> bool | None:
-    """回答を採点する。機械で採点できないものは None（手で確認）。"""
+def grade(question: dict, text: str) -> bool:
+    """回答を採点する。"""
     if question["kind"] == "unanswerable":
-        return any(p in text for p in UNKNOWN_PHRASES)
+        return says_unknown(text)
     if question["kind"] == "history":
-        return None
+        # 変更の流れを答える質問は、必要なパッチ番号がすべて回答に入っているかで採点する
+        if says_unknown(text):
+            return False
+        return all(contains_value(text, v) for v in question["evidence_versions"])
     return contains_value(graded_part(text), question["expected"])
 
 

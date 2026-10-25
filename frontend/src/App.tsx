@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import Markdown from 'react-markdown'
 import './App.css'
 
 type Source = {
@@ -11,18 +12,51 @@ type Source = {
 type AskResponse = {
   answer: string
   model: string
+  prompt?: string
+  search?: string
   sources: Source[]
 }
 
 const EXAMPLES = [
   'モンクの万象闘気圏の今の威力は？',
+  '機工士のエクスカベーターの2体目以降の威力減衰率は？',
   'PvPのモンクの夢幻闘舞は何が変わった？',
-  'ナイトのホーリースピリットの威力は？',
+  '分解スキルの上限値はいくつ？',
 ]
+
+const CURRENT_MARK = '【今の値】'
+const HISTORY_MARK = '【変更の経緯】'
 
 // 見出しに PvP 系の言葉が入っているチャンクは PvP として表示する
 function isPvP(headings: string): boolean {
   return /PvP|フロントライン|クリスタルコンフリクト/.test(headings)
+}
+
+type CurrentValue = {
+  value: string
+  basis: string | null
+}
+
+// v2 の回答から【今の値】の行を取り出し、残りを Markdown として返す
+function splitAnswer(answer: string): { current: CurrentValue | null; rest: string } {
+  const lines = answer.split('\n')
+  const index = lines.findIndex((line) => line.includes(CURRENT_MARK))
+  if (index === -1) {
+    return { current: null, rest: answer }
+  }
+
+  const line = lines[index].replace(CURRENT_MARK, '').replace(/\*\*/g, '').trim()
+  // 「25％（根拠: パッチ7.3）」を、値と根拠に分ける
+  const match = line.match(/^(.*?)[（(]\s*根拠[:：]\s*(.*?)\s*[）)]\s*$/)
+  const current = match ? { value: match[1].trim(), basis: match[2] } : { value: line, basis: null }
+
+  const rest = lines
+    .filter((_, i) => i !== index)
+    .join('\n')
+    .replace(HISTORY_MARK, '#### 変更の経緯')
+    .trim()
+
+  return { current, rest }
 }
 
 function App() {
@@ -66,6 +100,8 @@ function App() {
     ask(q)
   }
 
+  const parsed = result ? splitAnswer(result.answer) : null
+
   // 出典は新しいパッチが上に来るように並べ替える
   const sources = result ? [...result.sources].reverse() : []
 
@@ -96,12 +132,32 @@ function App() {
 
       {error && <p className="error">{error}</p>}
 
-      {result && (
+      {result && parsed && (
         <>
           <section className="answer">
             <h2>回答</h2>
-            <p>{result.answer}</p>
-            <p className="model">回答したモデル：{result.model}</p>
+
+            {parsed.current && (
+              <div className="current">
+                <span className="current-label">今の値</span>
+                <span className="current-value">{parsed.current.value}</span>
+                {parsed.current.basis && (
+                  <span className="current-basis">根拠：{parsed.current.basis}</span>
+                )}
+              </div>
+            )}
+
+            {parsed.rest && (
+              <div className="markdown">
+                <Markdown>{parsed.rest}</Markdown>
+              </div>
+            )}
+
+            <p className="meta">
+              モデル：{result.model}
+              {result.prompt && `　プロンプト：${result.prompt}`}
+              {result.search && `　検索：${result.search}`}
+            </p>
           </section>
 
           <section className="sources">

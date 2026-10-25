@@ -75,14 +75,60 @@ h2 {
   margin: 0 0 12px;
 }
 
-.answer p {
-  white-space: pre-wrap;
-  line-height: 1.7;
-  margin: 0;
+/* 【今の値】 */
+.current {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border-radius: 8px;
+  background: #11243f;
+  border: 1px solid #2f6feb;
 }
 
-.answer .model {
-  margin-top: 12px;
+.current-label {
+  font-size: 0.8rem;
+  color: #79c0ff;
+}
+
+.current-value {
+  font-size: 1.8rem;
+  font-weight: bold;
+}
+
+.current-basis {
+  font-size: 0.85rem;
+  color: #9aa4b2;
+}
+
+/* AI の回答（Markdown） */
+.markdown {
+  line-height: 1.7;
+}
+
+.markdown p {
+  margin: 0 0 8px;
+}
+
+.markdown h4 {
+  font-size: 0.9rem;
+  color: #9aa4b2;
+  margin: 0 0 6px;
+}
+
+.markdown ul {
+  margin: 0 0 8px;
+  padding-left: 1.4em;
+}
+
+.markdown strong {
+  color: #fff;
+}
+
+.meta {
+  margin: 12px 0 0;
   font-size: 0.8rem;
   color: #9aa4b2;
 }
