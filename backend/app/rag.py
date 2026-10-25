@@ -2,7 +2,6 @@
 
 import json
 import os
-import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -13,6 +12,8 @@ from google import genai
 from google.genai import errors, types
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
+
+from app.rules import bigrams, choose_prompt, fix_current_value, is_pvp_text
 
 ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / "backend" / ".env")
@@ -51,16 +52,6 @@ CANDIDATES = 30
 
 # hybrid で2つの順位を合わせるときの定数（RRF でよく使われる値）
 RRF_K = 60
-
-# 質問にこれらの言葉が入っていれば PvP の質問として扱う
-PVP_WORDS = re.compile(r"PvP|フロントライン|クリスタルコンフリクト")
-
-# auto のとき、これらの言葉が入った質問は「何が変わったか」「いつ変わったか」の質問として v1 で答える
-HISTORY_WORDS = re.compile(r"何が変わ|どう変わ|どう調整|変更点|変更内容|どのパッチ|いつ")
-
-# 【今の値】と【変更の経緯】の印
-CURRENT_MARK = "【今の値】"
-CHANGE_LINE = re.compile(r"^\s*[-・*]\s*パッチ\s*([\d.]+)\s*[:：]\s*(.+?)\s*→\s*(.+?)\s*$")
 
 RULES = """ルール:
 - 資料に書かれていないことは答えず、「パッチノートからは分かりませんでした」と答える
@@ -143,22 +134,16 @@ C の場合:
 
 質問: {question}
 """,
-    # auto: 質問の種類をコードで決めて、v1 か v2 を使う（中身は choose_prompt を参照）
+    # auto: 質問の種類をコードで決めて、v1 か v2 を使う（app/rules.py の choose_prompt を参照）
     "auto": None,
 }
 
-# 画面（API）で使うプロンプト。評価で効果を確かめてから切り替える
+# 画面（API）で使うプロンプト
 DEFAULT_PROMPT = "auto"
 
 
 def is_pvp_chunk(chunk: dict) -> bool:
-    return bool(PVP_WORDS.search(" > ".join(chunk["headings"])))
-
-
-def bigrams(text: str) -> list[str]:
-    """日本語は単語の区切りがないため、2文字ずつに区切ってキーワード検索に使う。"""
-    text = re.sub(r"\s+", "", text)
-    return [text[i : i + 2] for i in range(len(text) - 1)]
+    return is_pvp_text(" > ".join(chunk["headings"]))
 
 
 def build_keyword_indexes() -> dict[bool, tuple[list[str], BM25Okapi]]:
@@ -174,7 +159,7 @@ def build_keyword_indexes() -> dict[bool, tuple[list[str], BM25Okapi]]:
 embedder = SentenceTransformer(EMBEDDING_MODEL)
 collection = chromadb.PersistentClient(path=str(DB_DIR)).get_collection(COLLECTION)
 keyword_indexes = build_keyword_indexes()
-client = genai. Client(api_key=os.environ["GEMINI_API_KEY"])
+client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 
 class LLMUnavailableError(Exception):
@@ -195,7 +180,7 @@ def search(question: str, mode: str = DEFAULT_SEARCH) -> list[dict]:
     PvP の質問なら PvP のチャンクだけ、それ以外なら PvP 以外のチャンクだけを検索する。
     各チャンクには、検索での順位（rank）と、意味の近さ（score）を付ける。
     """
-    pvp = bool(PVP_WORDS.search(question))
+    pvp = is_pvp_text(question)
     embedding = embedder.encode(QUERY_PREFIX + question, normalize_embeddings=True)
 
     vector = collection.query(
@@ -238,32 +223,6 @@ def search(question: str, mode: str = DEFAULT_SEARCH) -> list[dict]:
         )
     # 古い順に並べると、資料の中で変更の流れが追いやすくなる
     return sorted(hits, key=lambda h: h["order"])
-
-
-def choose_prompt(question: str) -> str:
-    """auto のときに使うプロンプトを、質問の言葉から決める。"""
-    return "v1" if HISTORY_WORDS.search(question) else "v2"
-
-
-def fix_current_value(text: str) -> str:
-    """【変更の経緯】の中で一番新しいパッチの「変更後」を、【今の値】に入れ直す。
-
-    AI が正しい経緯を書いたのに、今の値だけを間違えることがあるため、
-    最後の一歩はコードで決める。経緯が書かれていなければ、そのまま返す。
-    """
-    lines = text.splitlines()
-    changes = [m for line in lines if (m := CHANGE_LINE.match(line.replace("**", "")))]
-    if not changes:
-        return text
-
-    latest = max(changes, key=lambda m: float(m.group(1)))
-    current = f"{CURRENT_MARK}{latest.group(3)}（根拠: パッチ{latest.group(1)}）"
-
-    for i, line in enumerate(lines):
-        if CURRENT_MARK in line:
-            lines[i] = current
-            return "\n".join(lines)
-    return "\n".join([current, *lines])
 
 
 def generate(prompt: str, models: list[str] | None = None) -> tuple[str, str]:
