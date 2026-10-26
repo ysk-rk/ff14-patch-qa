@@ -45,7 +45,7 @@ TOP_K = 8
 SEARCH_MODES = ("vector", "hybrid")
 
 # 画面（API）で使う検索のしかた。評価で効果を確かめてから切り替える
-DEFAULT_SEARCH = "vector"
+DEFAULT_SEARCH = "hybrid"
 
 # hybrid のとき、それぞれの検索で候補にする件数
 CANDIDATES = 30
