@@ -26,22 +26,35 @@ Q: What is the damage falloff for Machinist's Excavator on secondary targets?
 
 ## Results
 
-Measured on a 20-question dev set, adding one improvement at a time (answers generated with gemini-3.5-flash-lite).
+### Dev set (20 questions, used for tuning)
+
+Measured while adding one improvement at a time (answers generated with gemini-3.5-flash-lite).
 
 | Stage | Retrieval@3 | Correct answers |
 | --- | --- | --- |
-| Baseline | 87% | 19/19 * |
+| Baseline | 87% | 19/19 *1 |
 | PvE/PvP filtering | 93% | 17/19 |
-| Prompt v2 (write out the change history first) | 93% | 19/19 * |
+| Prompt v2 (write out the change history first) | 93% | 19/19 *1 |
 | Prompt auto (question type and current value decided in code) | 93% | 20/20 |
-| Hybrid search | 100% | (to be filled in after evaluation) |
+| Hybrid search (final) | 100% | 19/20 *2 |
 
-\* The one "what changed?" question was not scored at this point. Once it was scored, it turned out that v2 had stopped answering it (see below).
+\*1 The one "what changed?" question was not scored at this point. Once it was scored, it turned out that v2 had stopped answering it (see below).
+
+\*2 One question was answered "not found" even though the correct source was the top search result (see Known limitations). With gemini-3.8-flash, the final configuration answered all 16 questions it responded to correctly (4 failed with API rate-limit errors).
 
 - **Retrieval@3**: share of required source patches found in the top 3 search results
-- **Correct answers**: share of questions where the correct (current) value was given
+- **Correct answers**: current-value questions must give the right number; "what changed?" questions must mention every required patch; unanswerable questions must answer "not found"
 
-**Held-out test set (10 questions, not used for tuning)**: (to be filled in after evaluation)
+### Held-out test set (10 questions, never used for tuning)
+
+Run once, after the final configuration was fixed.
+
+| Model | Correct answers | Retrieval@3 | Retrieval@8 |
+| --- | --- | --- | --- |
+| gemini-3.5-flash-lite | 10/10 | 93% | 100% |
+| gemini-3.8-flash | 6/7 *3 | 93% | 100% |
+
+\*3 Three questions got no answer because of API rate limits and were not re-run. The one miss was a "what changed?" question: the answer left out intermediate changes that a later patch had overwritten (see below).
 
 ## How it works
 
@@ -51,7 +64,7 @@ Lodestone patch notes (23 pages)
   → embeddings (multilingual-e5-small) + Chroma
   → search: filter by PvE/PvP, combine semantic and keyword matching
   → choose a prompt: "current value" or "what changed", based on the question's wording
-  → answer with Gemini
+  → answer with Gemini (falls back to a lighter model when busy)
   → recompute the current value in code: take the "after" value of the newest patch in the history
 ```
 
@@ -61,7 +74,7 @@ Lodestone patch notes (23 pages)
 | Search | sentence-transformers (multilingual-e5-small), Chroma, rank-bm25 |
 | Answers | Gemini API (free tier) |
 | Frontend | TypeScript, React, Vite |
-| Tests | pytest |
+| Tests | pytest, GitHub Actions |
 
 ## What I focused on
 
@@ -94,6 +107,8 @@ The "what changed?" question was initially left unscored because it is hard to g
 ### 5. A separate held-out test set
 
 All improvements were chosen while looking at the 20 dev questions, so they may only work for those questions. A separate set of 10 test questions was therefore kept aside, never used for tuning, and run once after the final configuration was fixed. The test questions were committed before any results were seen.
+
+It did surface a failure the dev set had not shown. On a "what changed?" question, gemini-3.8-flash left out intermediate changes that a later patch had overwritten. The answer began with "summarizing the latest information", which suggests the model applied the "prefer the newest patch" rule to a history question too. As decided in advance, I did not tune on this result; it is recorded as a known limitation.
 
 ## Running locally
 
@@ -153,6 +168,8 @@ python scripts\run_eval.py --search hybrid --search-only
 
 `--search-only` measures retrieval without calling the LLM, so it does not use any API quota.
 
+The held-out set can be run with `--questions ..\eval\test_questions.jsonl`. Please don't use it to make tuning decisions.
+
 ## About the data
 
 - The patch notes are © SQUARE ENIX. This repository does not include their text; it only contains the fetching scripts and links to the original pages.
@@ -161,8 +178,11 @@ python scripts\run_eval.py --search hybrid --search-only
 
 ## Known limitations
 
+- The model sometimes answers "not found" even when the answer is in the sources. With the smaller model, a slight change in which chunks are retrieved can trigger this
+- The "prefer the newest patch" rule is sometimes applied to history questions, so intermediate changes that were later overwritten are left out
 - When one table cell contains two changes, the second one is sometimes missed
 - The question type is decided by keyword matching, so unexpected phrasings can be misclassified
+- On the Gemini API free tier, busy servers (503) and rate limits (429) can prevent an answer
 - New patch notes are not ingested automatically
 
 ## Documentation (Japanese)
