@@ -1,5 +1,7 @@
 # FF14 Patch Notes Q&A
 
+[![Tests](https://github.com/ysk-rk/ff14-patch-qa/actions/workflows/test.yml/badge.svg)](https://github.com/ysk-rk/ff14-patch-qa/actions/workflows/test.yml)
+
 [日本語](README.md)
 
 A Q&A app (RAG) that answers questions about the FINAL FANTASY XIV: Dawntrail patch notes (7.0–7.57), with sources.

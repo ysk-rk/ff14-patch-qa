@@ -1,5 +1,7 @@
 # FF14 パッチノート Q&A
 
+[![テスト](https://github.com/ysk-rk/ff14-patch-qa/actions/workflows/test.yml/badge.svg)](https://github.com/ysk-rk/ff14-patch-qa/actions/workflows/test.yml)
+
 [English](README.en.md)
 
 FINAL FANTASY XIV 黄金のレガシー（パッチ 7.0〜7.57）のパッチノートをもとに、質問に出典付きで答える Q&A アプリ（RAG）です。
