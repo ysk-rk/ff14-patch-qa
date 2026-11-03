@@ -59,6 +59,15 @@ RULES = """ルール:
 - PvE（通常のバトル）と PvP（見出しに「PvP」「フロントライン」などがあるもの）を区別する。質問に PvP と書かれていなければ PvE として答える
 - 答えの根拠にしたパッチ番号を必ず書く"""
 
+# 経緯の質問用のルール。RULES から2行目だけを入れ替えたもの
+# （「一番新しいものを今の情報として答える」を経緯の質問にもあてはめて、
+#   あとで上書きされた途中の変更を書き落とす失敗があった: t008、q021、q022）
+RULES_HISTORY = """ルール:
+- 資料に書かれていないことは答えず、「パッチノートからは分かりませんでした」と答える
+- 同じ項目が複数のパッチで変更されている場合も、あとのパッチで上書きされた変更を省略しない。質問されたスキルや項目の変更を、パッチの古い順にすべて書く
+- PvE（通常のバトル）と PvP（見出しに「PvP」「フロントライン」などがあるもの）を区別する。質問に PvP と書かれていなければ PvE として答える
+- 答えの根拠にしたパッチ番号を必ず書く"""
+
 PROMPTS = {
     # v1: 最初の版。ルールだけを伝えて、すぐに答えさせる
     "v1": """あなたは FINAL FANTASY XIV のパッチノートに詳しいアシスタントです。
@@ -134,12 +143,28 @@ C の場合:
 
 質問: {question}
 """,
-    # auto: 質問の種類をコードで決めて、v1 か v2 を使う（app/rules.py の choose_prompt を参照）
+    # v4: v1 のルールを、経緯の質問用（RULES_HISTORY）に入れ替えたもの
+    "v4": """あなたは FINAL FANTASY XIV のパッチノートに詳しいアシスタントです。
+以下の「資料」だけを使って、質問に日本語で答えてください。
+
+""" + RULES_HISTORY + """
+
+資料:
+{context}
+
+質問: {question}
+""",
+    # auto: 質問の種類をコードで決めて、経緯の質問なら AUTO_HISTORY_PROMPT、それ以外なら v2 を使う
+    # （app/rules.py の choose_prompt を参照）
     "auto": None,
 }
 
 # 画面（API）で使うプロンプト
 DEFAULT_PROMPT = "auto"
+
+# auto で経緯の質問と判定されたときに使うプロンプト
+# （choose_prompt は経緯の質問に "v1" を返す。前の結果と比べるときは "v1" に戻す）
+AUTO_HISTORY_PROMPT = "v4"
 
 
 def is_pvp_chunk(chunk: dict) -> bool:
@@ -253,6 +278,8 @@ def answer(
     context = "\n\n---\n\n".join(hit["text"] for hit in hits)
 
     used = choose_prompt(question) if prompt == "auto" else prompt
+    if prompt == "auto" and used == "v1":
+        used = AUTO_HISTORY_PROMPT
     text, model = generate(PROMPTS[used].format(context=context, question=question), models)
 
     # auto のときだけ、今の値をコードで決め直す（v2 や v3 単体の評価には手を加えない）
