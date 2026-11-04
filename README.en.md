@@ -28,35 +28,50 @@ Q: What is the damage falloff for Machinist's Excavator on secondary targets?
 
 ## Results
 
-### Dev set (20 questions, used for tuning)
+### Dev set (used for tuning)
 
-Measured while adding one improvement at a time (answers generated with gemini-3.5-flash-lite).
+Measured while adding one improvement at a time (answers generated with gemini-3.5-flash-lite). Along the way, the used-up test questions and four new "what changed?" questions were added, taking the set from 20 to 34 questions.
 
-| Stage | Retrieval@3 | Correct answers |
-| --- | --- | --- |
-| Baseline | 87% | 19/19 *1 |
-| PvE/PvP filtering | 93% | 17/19 |
-| Prompt v2 (write out the change history first) | 93% | 19/19 *1 |
-| Prompt auto (question type and current value decided in code) | 93% | 20/20 |
-| Hybrid search (final) | 100% | 19/20 *2 |
+| Stage | Questions | Retrieval@3 | Correct answers |
+| --- | --- | --- | --- |
+| Baseline | 20 | 87% | 19/19 *1 |
+| PvE/PvP filtering | 20 | 93% | 17/19 |
+| Prompt v2 (write out the change history first) | 20 | 93% | 19/19 *1 |
+| Prompt auto (question type and current value decided in code) | 20 | 93% | 20/20 |
+| Hybrid search | 20 | 100% | 19/20 *2 |
+| Expanded to 34 questions (baseline before the fix) | 34 | 96% | 31/34 |
+| History prompt v4 (final) | 34 | 96% | 33/34 *2 |
+
+```mermaid
+xychart-beta
+    title "Retrieval@3 (bars) and answer accuracy (line) by stage"
+    x-axis ["Baseline", "PvE/PvP", "v2", "auto", "hybrid", "34q before", "34q v4"]
+    y-axis "%" 80 --> 100
+    bar [87, 93, 93, 93, 100, 96, 96]
+    line [100, 89, 100, 100, 95, 91, 97]
+```
 
 \*1 The one "what changed?" question was not scored at this point. Once it was scored, it turned out that v2 had stopped answering it (see below).
 
-\*2 One question was answered "not found" even though the correct source was the top search result (see Known limitations). With gemini-3.8-flash, the final configuration answered all 16 questions it responded to correctly (4 failed with API rate-limit errors).
+\*2 The one miss (q018) was answered "not found" even though the correct source was the top search result (see Known limitations).
 
 - **Retrieval@3**: share of required source patches found in the top 3 search results
 - **Correct answers**: current-value questions must give the right number; "what changed?" questions must mention every required patch; unanswerable questions must answer "not found"
 
-### Held-out test set (10 questions, never used for tuning)
+### Held-out test sets (never used for tuning)
 
-Run once, after the final configuration was fixed.
+Ten questions were committed before any results were seen, and run after the configuration was fixed.
 
-| Model | Correct answers | Retrieval@3 | Retrieval@8 |
-| --- | --- | --- | --- |
-| gemini-3.5-flash-lite | 10/10 | 93% | 100% |
-| gemini-3.8-flash | 6/7 *3 | 93% | 100% |
+| Round | Configuration | Model | Correct answers | Retrieval@3 |
+| --- | --- | --- | --- | --- |
+| 1st (t001–t010) | auto + hybrid | gemini-3.5-flash-lite | 10/10 | 93% |
+| 1st (t001–t010) | auto + hybrid | gemini-3.8-flash | 6/7 *3 | 93% |
+| 2nd (n001–n010) | v4 + hybrid | gemini-3.5-flash-lite | 10/10 | 100% |
+| 2nd (n001–n010) | v4 + hybrid | gemini-3.8-flash | not measured yet *4 | – |
 
-\*3 Three questions got no answer because of API rate limits and were not re-run. The one miss was a "what changed?" question: the answer left out intermediate changes that a later patch had overwritten (see below).
+\*3 Three questions got no answer because of API rate limits and were not re-run. The one miss was a "what changed?" question: the answer left out intermediate changes that a later patch had overwritten. This led to prompt v4 (see below).
+
+\*4 No answers yet because of free-tier server load (503) and rate limits (429).
 
 ## How it works
 
@@ -65,7 +80,7 @@ Lodestone patch notes (23 pages)
   → extract text and tables, split into chunks (2,932)
   → embeddings (multilingual-e5-small) + Chroma
   → search: filter by PvE/PvP, combine semantic and keyword matching
-  → choose a prompt: "current value" or "what changed", based on the question's wording
+  → choose a prompt from the question's wording: v2 for "current value", v4 for "what changed"
   → answer with Gemini (falls back to a lighter model when busy)
   → recompute the current value in code: take the "after" value of the newest patch in the history
 ```
@@ -87,7 +102,7 @@ Lodestone patch notes (23 pages)
 
 ### 2. The dev set includes a "different attribute changed later" trap
 
-A skill's potency may have last changed in 7.2 while its falloff last changed in 7.5. A model that just looks for "the newest patch" will cite a patch that never touched the attribute being asked about. Five of the 20 dev questions have this shape.
+A skill's potency may have last changed in 7.2 while its falloff last changed in 7.5. A model that just looks for "the newest patch" will cite a patch that never touched the attribute being asked about. Eight of the dev questions have this shape.
 
 Expected answers were verified by checking that each patch's "before" value matches the previous patch's "after" value; a missed change would break the chain.
 
@@ -108,9 +123,33 @@ The "what changed?" question was initially left unscored because it is hard to g
 
 ### 5. A separate held-out test set
 
-All improvements were chosen while looking at the 20 dev questions, so they may only work for those questions. A separate set of 10 test questions was therefore kept aside, never used for tuning, and run once after the final configuration was fixed. The test questions were committed before any results were seen.
+All improvements were chosen while looking at the dev questions, so they may only work for those questions. A separate set of 10 test questions was therefore kept aside, never used for tuning, and run after the configuration was fixed. The test questions were committed before any results were seen.
 
-It did surface a failure the dev set had not shown. On a "what changed?" question, gemini-3.8-flash left out intermediate changes that a later patch had overwritten. The answer began with "summarizing the latest information", which suggests the model applied the "prefer the newest patch" rule to a history question too. As decided in advance, I did not tune on this result; it is recorded as a known limitation.
+The first test round surfaced a failure the dev set had not shown. On a "what changed?" question, gemini-3.8-flash left out intermediate changes that a later patch had overwritten. The answer began with "summarizing the latest information", which suggests the model applied the "prefer the newest patch" rule to a history question too.
+
+### 6. Rebuilding the question sets before fixing the problem
+
+Once the test results had been seen, those questions could no longer serve as a held-out check. So, **before changing anything**, I:
+
+1. moved the used-up test questions into the dev set
+2. added four dev questions where the same attribute is changed and later overwritten
+3. wrote a new set of 10 test questions with the same shapes, and committed it
+4. fixed the acceptance criteria in advance (all history questions correct, no new misses elsewhere)
+
+The baseline showed the smaller model failing two history questions as well, with answers starting "here is the latest information". The rule causing this is still needed for current-value questions, so I created **v4, which swaps that one rule for "do not omit changes that were later overwritten; list every change in patch order", and is used only for history questions**. The current-value prompt (v2) was not changed at all.
+
+Results went from 31/34 to 33/34, and history questions from 4/6 to 6/6. The new test set scored 10/10. However, the four history questions in the test set might have been answered correctly by the old prompt too; the clear evidence for v4 comes from the two dev questions.
+
+### 7. Changes I tried and reverted
+
+Changes that did not meet the pre-set criteria were reverted and documented.
+
+| Change | Goal | Why it was reverted |
+| --- | --- | --- |
+| Split multiple changes in one table cell into separate rows | Stop the second change from being missed | Another question's source dropped out of the top 3 |
+| Filter retrieval by the job named in the question | Stop the LLM from being confused by a similar change for another job (q018) | Another question's required history source was pushed out of the top 8 |
+
+In both cases, a change that fixed one question pushed out a source another question needed. Only 8 chunks are passed to the LLM, so removing one lets another one in.
 
 ## Running locally
 
@@ -166,11 +205,12 @@ cd backend
 python -m pytest
 python scripts\run_eval.py --prompt auto --search hybrid
 python scripts\run_eval.py --search hybrid --search-only
+python scripts\show_context.py "PvPのナイトのホーリースピリットの最大チャージ数は？"
 ```
 
-`--search-only` measures retrieval without calling the LLM, so it does not use any API quota.
-
-The held-out set can be run with `--questions ..\eval\test_questions.jsonl`. Please don't use it to make tuning decisions.
+- `--search-only` measures retrieval without calling the LLM, so it does not use any API quota.
+- `show_context.py` prints the sources and prompt that would be sent to the LLM, without calling it. Useful for debugging a wrong answer.
+- The held-out set can be run with `--questions ..\eval\test_questions.jsonl`. Please don't use it to make tuning decisions.
 
 ## About the data
 
@@ -180,10 +220,11 @@ The held-out set can be run with `--questions ..\eval\test_questions.jsonl`. Ple
 
 ## Known limitations
 
-- The model sometimes answers "not found" even when the answer is in the sources. With the smaller model, a slight change in which chunks are retrieved can trigger this
-- The "prefer the newest patch" rule is sometimes applied to history questions, so intermediate changes that were later overwritten are left out
+- The model sometimes answers "not found" even when the answer is in the sources. For q018, the likely cause is a similar "max charges" change for a different job in a newer patch. Filtering retrieval by job was tried and reverted
+- The v4 improvement has not yet been verified with gemini-3.8-flash (free-tier load and rate limits)
 - When one table cell contains two changes, the second one is sometimes missed
 - The question type is decided by keyword matching, so unexpected phrasings can be misclassified
+- Grading only checks that the right numbers or patch numbers appear in the answer; it does not verify that the history itself is correct
 - On the Gemini API free tier, busy servers (503) and rate limits (429) can prevent an answer
 - New patch notes are not ingested automatically
 
