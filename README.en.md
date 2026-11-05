@@ -8,6 +8,11 @@ A Q&A app (RAG) that answers questions about the FINAL FANTASY XIV: Dawntrail pa
 
 ![Screenshot](docs/images/screenshot.png)
 
+### Demo
+https://github.com/user-attachments/assets/f3cdd3a4-9259-4b56-bdea-b8b35b8c8b7a
+
+
+
 The app and its data are in Japanese.
 
 ## The problem
