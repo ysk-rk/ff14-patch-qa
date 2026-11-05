@@ -154,8 +154,33 @@ C の場合:
 
 質問: {question}
 """,
-    # auto: 質問の種類をコードで決めて、経緯の質問なら AUTO_HISTORY_PROMPT、それ以外なら v2 を使う
-    # （app/rules.py の choose_prompt を参照）
+    # v5: v2 の手順の1と2に、質問されたジョブ・スキルの資料だけを使う指示を足したもの
+    # （同じ「最大チャージ数」の変更が、より新しいパッチで別のジョブにあり、
+    #   軽いモデルが答えるのをやめた: q018）
+    "v5": """あなたは FINAL FANTASY XIV のパッチノートに詳しいアシスタントです。
+以下の「資料」だけを使って、質問に日本語で答えてください。
+
+""" + RULES + """
+
+数値の今の値（威力、減衰率、上限値など）を聞かれた場合は、次の手順で答える:
+1. 質問されたジョブとスキル、項目を1つに決める（例: 威力なのか、2体目以降の威力減衰率なのか）
+2. 資料の中から、そのジョブのそのスキルの、その項目が変わった箇所だけを、パッチの古い順に「パッチ番号: 変更前 → 変更後」の形で書き出す。別のジョブや別のスキルの資料は、同じ項目（威力、最大チャージ数など）が書かれていても使わない。1つの行に複数の変更が書かれている場合は、質問された項目の部分だけを取り出す
+3. 一番新しいパッチの「変更後」の値を、今の値とする
+4. 次の形で答える
+
+【今の値】（今の値）（根拠: パッチ〇〇）
+【変更の経緯】
+- パッチ〇〇: 〇〇 → 〇〇
+
+それ以外の質問には、ふつうの文章で答える。
+
+資料:
+{context}
+
+質問: {question}
+""",
+    # auto: 質問の種類をコードで決めて、経緯の質問なら AUTO_HISTORY_PROMPT、それ以外なら AUTO_CURRENT_PROMPT を使う
+    # （app/rules.py の choose_prompt と、下の pick_prompt を参照）
     "auto": None,
 }
 
@@ -165,6 +190,17 @@ DEFAULT_PROMPT = "auto"
 # auto で経緯の質問と判定されたときに使うプロンプト
 # （choose_prompt は経緯の質問に "v1" を返す。前の結果と比べるときは "v1" に戻す）
 AUTO_HISTORY_PROMPT = "v4"
+
+# auto でそれ以外（今の値など）と判定されたときに使うプロンプト
+# （choose_prompt はこの場合 "v2" を返す。前の結果と比べるときは "v2" に戻す）
+AUTO_CURRENT_PROMPT = "v5"
+
+
+def pick_prompt(question: str, prompt: str = DEFAULT_PROMPT) -> str:
+    """実際に使うプロンプトの名前を返す。auto のときは、質問の種類で選ぶ。"""
+    if prompt != "auto":
+        return prompt
+    return AUTO_HISTORY_PROMPT if choose_prompt(question) == "v1" else AUTO_CURRENT_PROMPT
 
 
 def is_pvp_chunk(chunk: dict) -> bool:
@@ -277,9 +313,7 @@ def answer(
     hits = search(question, search_mode)
     context = "\n\n---\n\n".join(hit["text"] for hit in hits)
 
-    used = choose_prompt(question) if prompt == "auto" else prompt
-    if prompt == "auto" and used == "v1":
-        used = AUTO_HISTORY_PROMPT
+    used = pick_prompt(question, prompt)
     text, model = generate(PROMPTS[used].format(context=context, question=question), models)
 
     # auto のときだけ、今の値をコードで決め直す（v2 や v3 単体の評価には手を加えない）

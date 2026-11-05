@@ -13,8 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
 
-from app.rag import AUTO_HISTORY_PROMPT, DEFAULT_SEARCH, PROMPTS, SEARCH_MODES, search  # noqa: E402
-from app.rules import choose_prompt  # noqa: E402
+from app.rag import DEFAULT_SEARCH, PROMPTS, SEARCH_MODES, pick_prompt, search  # noqa: E402
 
 DEBUG_DIR = ROOT / "data" / "debug"
 
@@ -29,9 +28,7 @@ def main() -> None:
 
     # rag.py の answer と同じ方法で、資料をつないでプロンプトを選ぶ
     context = "\n\n---\n\n".join(hit["text"] for hit in hits)
-    used = choose_prompt(args.question)
-    if used == "v1":
-        used = AUTO_HISTORY_PROMPT
+    used = pick_prompt(args.question)
     prompt = PROMPTS[used].format(context=context, question=args.question)
 
     print(f"質問: {args.question}")
