@@ -8,6 +8,11 @@ FINAL FANTASY XIV 黄金のレガシー（パッチ 7.0〜7.57）のパッチノ
 
 ![画面](docs/images/screenshot.png)
 
+### デモ
+https://github.com/user-attachments/assets/c81d9cdb-f51d-401c-a6c1-d7f66d8ee39f
+
+
+
 ## 何を解決するか
 
 パッチノートは、新しいパッチが古い内容を上書きしていきます。たとえば、あるスキルの「2体目以降の威力減衰率」は、7.2 で 65％ → 50％、7.25 で 50％ → 35％、7.3 で 35％ → 25％ と変わっています。
