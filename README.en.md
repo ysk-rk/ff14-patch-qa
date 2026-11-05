@@ -40,20 +40,21 @@ Measured while adding one improvement at a time (answers generated with gemini-3
 | Prompt auto (question type and current value decided in code) | 20 | 93% | 20/20 |
 | Hybrid search | 20 | 100% | 19/20 *2 |
 | Expanded to 34 questions (baseline before the fix) | 34 | 96% | 31/34 |
-| History prompt v4 (final) | 34 | 96% | 33/34 *2 |
+| History prompt v4 | 34 | 96% | 33/34 *2 |
+| Current-value prompt v5 (final) | 34 | 96% | 34/34 |
 
 ```mermaid
 xychart-beta
     title "Retrieval@3 (bars) and answer accuracy (line) by stage"
-    x-axis ["Baseline", "PvE/PvP", "v2", "auto", "hybrid", "34q before", "34q v4"]
+    x-axis ["Baseline", "PvE/PvP", "v2", "auto", "hybrid", "34q before", "34q v4", "34q v5"]
     y-axis "%" 80 --> 100
-    bar [87, 93, 93, 93, 100, 96, 96]
-    line [100, 89, 100, 100, 95, 91, 97]
+    bar [87, 93, 93, 93, 100, 96, 96, 96]
+    line [100, 89, 100, 100, 95, 91, 97, 100]
 ```
 
 \*1 The one "what changed?" question was not scored at this point. Once it was scored, it turned out that v2 had stopped answering it (see below).
 
-\*2 The one miss (q018) was answered "not found" even though the correct source was the top search result (see Known limitations).
+\*2 The one miss (q018) was answered "not found" even though the correct source was the top search result. Fixed by v5 (see below).
 
 - **Retrieval@3**: share of required source patches found in the top 3 search results
 - **Correct answers**: current-value questions must give the right number; "what changed?" questions must mention every required patch; unanswerable questions must answer "not found"
@@ -67,11 +68,12 @@ Ten questions were committed before any results were seen, and run after the con
 | 1st (t001–t010) | auto + hybrid | gemini-3.5-flash-lite | 10/10 | 93% |
 | 1st (t001–t010) | auto + hybrid | gemini-3.8-flash | 6/7 *3 | 93% |
 | 2nd (n001–n010) | v4 + hybrid | gemini-3.5-flash-lite | 10/10 | 100% |
-| 2nd (n001–n010) | v4 + hybrid | gemini-3.8-flash | not measured yet *4 | – |
+| 2nd (n001–n010) | v4, v5 + hybrid | gemini-3.5-flash-lite | 10/10 | 100% |
+| 2nd (n001–n010) | v4, v5 + hybrid | gemini-3.8-flash | not measured *4 | – |
 
 \*3 Three questions got no answer because of API rate limits and were not re-run. The one miss was a "what changed?" question: the answer left out intermediate changes that a later patch had overwritten. This led to prompt v4 (see below).
 
-\*4 No answers yet because of free-tier server load (503) and rate limits (429).
+\*4 Four attempts between Nov 3 and Nov 5 got no answers because of free-tier server load (503) and rate limits (429), so this was put on hold.
 
 ## How it works
 
@@ -80,7 +82,7 @@ Lodestone patch notes (23 pages)
   → extract text and tables, split into chunks (2,932)
   → embeddings (multilingual-e5-small) + Chroma
   → search: filter by PvE/PvP, combine semantic and keyword matching
-  → choose a prompt from the question's wording: v2 for "current value", v4 for "what changed"
+  → choose a prompt from the question's wording: v5 for "current value", v4 for "what changed"
   → answer with Gemini (falls back to a lighter model when busy)
   → recompute the current value in code: take the "after" value of the newest patch in the history
 ```
@@ -136,11 +138,21 @@ Once the test results had been seen, those questions could no longer serve as a 
 3. wrote a new set of 10 test questions with the same shapes, and committed it
 4. fixed the acceptance criteria in advance (all history questions correct, no new misses elsewhere)
 
-The baseline showed the smaller model failing two history questions as well, with answers starting "here is the latest information". The rule causing this is still needed for current-value questions, so I created **v4, which swaps that one rule for "do not omit changes that were later overwritten; list every change in patch order", and is used only for history questions**. The current-value prompt (v2) was not changed at all.
+The baseline showed the smaller model failing two history questions as well, with answers starting "here is the latest information". The rule causing this is still needed for current-value questions, so I created **v4, which swaps that one rule for "do not omit changes that were later overwritten; list every change in patch order", and is used only for history questions**. The current-value prompt was not changed at all.
 
 Results went from 31/34 to 33/34, and history questions from 4/6 to 6/6. The new test set scored 10/10. However, the four history questions in the test set might have been answered correctly by the old prompt too; the clear evidence for v4 comes from the two dev questions.
 
-### 7. Changes I tried and reverted
+### 7. Debugging without calling the LLM, and fixing in the prompt instead of retrieval
+
+The last remaining miss (q018) was "What is the max charges of PvP Paladin's Holy Spirit?". The correct source (7.3, 1 → 2) was the top search result, yet the answer was "not found".
+
+A script that prints the sources and prompt without calling the LLM showed that the 7th source was **a different job's (Gunbreaker) "max charges 2 → 3"**, from a newer patch (7.35). The model was likely torn between "use the newest patch" and "this is a different job", and gave up.
+
+Filtering other jobs out of retrieval pushed out a source another question needed, so it was reverted (see the table below). Instead, I created **v5, which keeps the sources as they are and adds to the current-value prompt: "do not use sources about other jobs or skills, even if they mention the same attribute"**. q018 then answered "2 (source: Patch 7.3)", reaching 34/34. The test set stayed at 10/10.
+
+However, the test set has no question of the same shape as q018, so it is not yet verified that this fix works for that pattern in general.
+
+### 8. Changes I tried and reverted
 
 Changes that did not meet the pre-set criteria were reverted and documented.
 
@@ -220,8 +232,8 @@ python scripts\show_context.py "PvPのナイトのホーリースピリットの
 
 ## Known limitations
 
-- The model sometimes answers "not found" even when the answer is in the sources. For q018, the likely cause is a similar "max charges" change for a different job in a newer patch. Filtering retrieval by job was tried and reverted
-- The v4 improvement has not yet been verified with gemini-3.8-flash (free-tier load and rate limits)
+- It is not yet verified that v5 works in general for questions shaped like q018 (a newer change to the same attribute for a different job). The next held-out set will include such questions
+- The v4 and v5 improvements have not yet been verified with gemini-3.8-flash (free-tier load and rate limits)
 - When one table cell contains two changes, the second one is sometimes missed
 - The question type is decided by keyword matching, so unexpected phrasings can be misclassified
 - Grading only checks that the right numbers or patch numbers appear in the answer; it does not verify that the history itself is correct
