@@ -1,7 +1,6 @@
 """検索したチャンクを Gemini に渡して、出典付きの回答を作る。"""
 
 import json
-from collections import defaultdict
 from pathlib import Path
 
 import chromadb
@@ -11,7 +10,16 @@ from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 
 from app.llm import LLMUnavailableError, generate  # noqa: F401（main.py と run_eval.py が rag から読み込んでいる）
-from app.rules import bigrams, choose_prompt, fix_current_value, is_pvp_text
+from app.rules import (
+    bigrams,
+    choose_prompt,
+    fix_current_value,
+    fuse_ranks,
+    is_pvp_text,
+    job_names_from_headings,
+    job_of,
+    jobs_in,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(ROOT / "backend" / ".env")
@@ -41,6 +49,10 @@ CANDIDATES = 30
 
 # hybrid で2つの順位を合わせるときの定数（RRF でよく使われる値）
 RRF_K = 60
+
+# 質問のジョブと、資料の見出しのジョブが合うときに、hybrid の点数に足す値（0 なら足さない）
+# 合わない資料は外さない（ジョブで絞り込むと、ほかの問題の資料を押し出した: q024）
+JOB_BONUS = 0
 
 RULES = """ルール:
 - 資料に書かれていないことは答えず、「パッチノートからは分かりませんでした」と答える
@@ -205,11 +217,17 @@ def build_keyword_indexes() -> dict[bool, tuple[list[str], BM25Okapi]]:
         indexes[pvp] = ([c["id"] for c in group], BM25Okapi([bigrams(c["text"]) for c in group]))
     return indexes
 
+def build_chunk_jobs() -> tuple[set[str], dict[str, set[str]]]:
+    """チャンクの見出しから、ジョブとクラスの名前の一覧と、チャンクごとのジョブを作る。"""
+    chunks = [json.loads(line) for line in CHUNKS.open(encoding="utf-8")]
+    names = job_names_from_headings([c["headings"] for c in chunks])
+    jobs = {c["id"]: (jobs_in(c["headings"][-1], names) if c["headings"] else set()) for c in chunks}
+    return names, jobs
 
 embedder = SentenceTransformer(EMBEDDING_MODEL)
 collection = chromadb.PersistentClient(path=str(DB_DIR)).get_collection(COLLECTION)
 keyword_indexes = build_keyword_indexes()
-
+job_names, chunk_jobs = build_chunk_jobs()
 
 def keyword_search(question: str, pvp: bool) -> list[str]:
     """キーワードの一致で、上位 CANDIDATES 件のチャンクの ID を返す。"""
@@ -239,13 +257,12 @@ def search(question: str, mode: str = DEFAULT_SEARCH) -> list[dict]:
     if mode == "vector":
         ids = vector_ids[:TOP_K]
     else:
-        # 2つの検索の順位から点数を付けて足し合わせる（RRF）
-        fused: dict[str, float] = defaultdict(float)
-        for ranked in (vector_ids, keyword_search(question, pvp)):
-            for rank, chunk_id in enumerate(ranked, start=1):
-                fused[chunk_id] += 1 / (RRF_K + rank)
-        ids = sorted(fused, key=lambda i: fused[i], reverse=True)[:TOP_K]
-
+        # 2つの検索の順位から点数を付けて足し合わせる（RRF）。質問のジョブと合う資料には JOB_BONUS を足す
+        job = job_of(question, job_names)
+        boosted = {i for i, jobs in chunk_jobs.items() if job in jobs} if job else set()
+        ranked = fuse_ranks([vector_ids, keyword_search(question, pvp)], RRF_K, boosted, JOB_BONUS)
+        ids = ranked[:TOP_K]
+        
     got = collection.get(ids=ids, include=["documents", "metadatas", "embeddings"])
     by_id = {
         chunk_id: (doc, meta, emb)
