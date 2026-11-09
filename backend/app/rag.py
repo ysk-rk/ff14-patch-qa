@@ -1,18 +1,16 @@
 """検索したチャンクを Gemini に渡して、出典付きの回答を作る。"""
 
 import json
-import os
 from collections import defaultdict
 from pathlib import Path
 
 import chromadb
 import numpy as np
 from dotenv import load_dotenv
-from google import genai
-from google.genai import errors, types
 from rank_bm25 import BM25Okapi
 from sentence_transformers import SentenceTransformer
 
+from app.llm import LLMUnavailableError, generate  # noqa: F401（main.py と run_eval.py が rag から読み込んでいる）
 from app.rules import bigrams, choose_prompt, fix_current_value, is_pvp_text
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -26,15 +24,6 @@ QUERY_PREFIX = "query: "
 
 # キーワード検索に使うチャンク（scripts/extract_chunks.py が作るもの）
 CHUNKS = ROOT / "data" / "processed" / "chunks.jsonl"
-
-# 無料枠で使える Gemini のモデル。先頭から順に試し、混雑していたら次のモデルを使う
-LLM_MODELS = ["gemini-3.8-flash", "gemini-3.5-flash-lite"]
-
-# 混雑や回数制限など、別のモデルなら通る可能性があるエラーのコード
-RETRYABLE_CODES = {429, 500, 503}
-
-# 答えのランダムさ。0 にすると、同じ質問には毎回なるべく同じ答えを返す
-TEMPERATURE = 0
 
 # AI に渡す資料の件数
 TOP_K = 8
@@ -220,11 +209,6 @@ def build_keyword_indexes() -> dict[bool, tuple[list[str], BM25Okapi]]:
 embedder = SentenceTransformer(EMBEDDING_MODEL)
 collection = chromadb.PersistentClient(path=str(DB_DIR)).get_collection(COLLECTION)
 keyword_indexes = build_keyword_indexes()
-client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-
-
-class LLMUnavailableError(Exception):
-    """すべてのモデルが混雑などで使えなかったときのエラー。"""
 
 
 def keyword_search(question: str, pvp: bool) -> list[str]:
@@ -284,24 +268,6 @@ def search(question: str, mode: str = DEFAULT_SEARCH) -> list[dict]:
         )
     # 古い順に並べると、資料の中で変更の流れが追いやすくなる
     return sorted(hits, key=lambda h: h["order"])
-
-
-def generate(prompt: str, models: list[str] | None = None) -> tuple[str, str]:
-    """models（省略時は LLM_MODELS）を先頭から順に試し、(回答, 使ったモデル名) を返す。"""
-    failures = []
-    for model in models or LLM_MODELS:
-        try:
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=types.GenerateContentConfig(temperature=TEMPERATURE),
-            )
-            return response.text, model
-        except errors.APIError as e:
-            if e.code not in RETRYABLE_CODES:
-                raise
-            failures.append(f"{model}: {e.code}")
-    raise LLMUnavailableError("、".join(failures))
 
 
 def answer(
