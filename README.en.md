@@ -61,6 +61,8 @@ xychart-beta
 
 \*2 The one miss (q018) was answered "not found" even though the correct source was the top search result. Fixed by v5 (see below).
 
+Later, the second held-out set was also moved into the dev set, bringing it to 44 questions. Only retrieval has been measured on all 44 so far: Retrieval@3 is 97% and Retrieval@8 (the 8 chunks passed to the LLM) is 100%. Answer accuracy will be measured with the next improvement.
+
 - **Retrieval@3**: share of required source patches found in the top 3 search results
 - **Correct answers**: current-value questions must give the right number; "what changed?" questions must mention every required patch; unanswerable questions must answer "not found"
 
@@ -75,10 +77,13 @@ Ten questions were committed before any results were seen, and run after the con
 | 2nd (n001–n010) | v4 + hybrid | gemini-3.5-flash-lite | 10/10 | 100% |
 | 2nd (n001–n010) | v4, v5 + hybrid | gemini-3.5-flash-lite | 10/10 | 100% |
 | 2nd (n001–n010) | v4, v5 + hybrid | gemini-3.8-flash | not measured *4 | – |
+| 3rd (m001–m010) | – | – | not run yet *5 | – |
 
 \*3 Three questions got no answer because of API rate limits and were not re-run. The one miss was a "what changed?" question: the answer left out intermediate changes that a later patch had overwritten. This led to prompt v4 (see below).
 
 \*4 Four attempts between Nov 3 and Nov 5 got no answers because of free-tier server load (503) and rate limits (429), so this was put on hold.
+
+\*5 Includes three questions shaped like q018. It will be run once the next improvement is finalized.
 
 ## How it works
 
@@ -88,7 +93,7 @@ Lodestone patch notes (23 pages)
   → embeddings (multilingual-e5-small) + Chroma
   → search: filter by PvE/PvP, combine semantic and keyword matching
   → choose a prompt from the question's wording: v5 for "current value", v4 for "what changed"
-  → answer with Gemini (falls back to a lighter model when busy)
+  → answer with an LLM (llm.py; currently Gemini, falling back to a lighter model when busy)
   → recompute the current value in code: take the "after" value of the newest patch in the history
 ```
 
@@ -96,7 +101,7 @@ Lodestone patch notes (23 pages)
 | --- | --- |
 | Backend | Python 3.12, FastAPI |
 | Search | sentence-transformers (multilingual-e5-small), Chroma, rank-bm25 |
-| Answers | Gemini API (free tier) |
+| Answers | Gemini API (free tier). The LLM layer is built so the provider can be swapped |
 | Frontend | TypeScript, React, Vite |
 | Tests | pytest, GitHub Actions |
 
@@ -109,7 +114,7 @@ Lodestone patch notes (23 pages)
 
 ### 2. The dev set includes a "different attribute changed later" trap
 
-A skill's potency may have last changed in 7.2 while its falloff last changed in 7.5. A model that just looks for "the newest patch" will cite a patch that never touched the attribute being asked about. Eight of the dev questions have this shape.
+A skill's potency may have last changed in 7.2 while its falloff last changed in 7.5. A model that just looks for "the newest patch" will cite a patch that never touched the attribute being asked about. Ten of the 44 dev questions have this shape.
 
 Expected answers were verified by checking that each patch's "before" value matches the previous patch's "after" value; a missed change would break the chain.
 
@@ -155,7 +160,7 @@ A script that prints the sources and prompt without calling the LLM showed that 
 
 Filtering other jobs out of retrieval pushed out a source another question needed, so it was reverted (see the table below). Instead, I created **v5, which keeps the sources as they are and adds to the current-value prompt: "do not use sources about other jobs or skills, even if they mention the same attribute"**. q018 then answered "2 (source: Patch 7.3)", reaching 34/34. The test set stayed at 10/10.
 
-However, the test set has no question of the same shape as q018, so it is not yet verified that this fix works for that pattern in general.
+However, the second held-out set had no question shaped like q018. So I wrote a script that searches the data for places where a different job has a newer change to the same attribute. After confirming that it finds q018 itself, I used it to put three such questions into the third held-out set (two PvP, one PvE; not run yet).
 
 ### 8. Changes I tried and reverted
 
@@ -167,6 +172,14 @@ Changes that did not meet the pre-set criteria were reverted and documented.
 | Filter retrieval by the job named in the question | Stop the LLM from being confused by a similar change for another job (q018) | Another question's required history source was pushed out of the top 8 |
 
 In both cases, a change that fixed one question pushed out a source another question needed. Only 8 chunks are passed to the LLM, so removing one lets another one in.
+
+### 9. Separating the LLM layer so other models can be compared
+
+On the free tier, gemini-3.8-flash often returns no answer because of load and rate limits, so the v4 and v5 improvements have not been verified on it. To make it possible to compare a paid model or another provider's model, the LLM calls were moved into `backend/app/llm.py`.
+
+- Each provider is one class, and `LLM_PROVIDER` in `.env` selects which one to use (only Gemini for now)
+- The fallback to the next model on busy errors is tested with a fake provider, without calling any LLM
+- Adding a provider only means adding one class to llm.py; search, prompts, grading and the UI stay the same
 
 ## Running locally
 
@@ -189,6 +202,8 @@ Create `backend/.env` with your API key:
 
 ```text
 GEMINI_API_KEY=(your key)
+# Optional (defaults to gemini)
+LLM_PROVIDER=gemini
 ```
 
 Fetch the patch notes and build the search index (the fetcher downloads 23 pages once, 5 seconds apart):
@@ -237,7 +252,7 @@ python scripts\show_context.py "PvPのナイトのホーリースピリットの
 
 ## Known limitations
 
-- It is not yet verified that v5 works in general for questions shaped like q018 (a newer change to the same attribute for a different job). The next held-out set will include such questions
+- It is not yet verified that v5 works in general for questions shaped like q018 (a newer change to the same attribute for a different job). Three such questions are in the third held-out set (m001–m003) and will be run once the next improvement is finalized
 - The v4 and v5 improvements have not yet been verified with gemini-3.8-flash (free-tier load and rate limits)
 - When one table cell contains two changes, the second one is sometimes missed
 - The question type is decided by keyword matching, so unexpected phrasings can be misclassified
