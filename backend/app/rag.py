@@ -50,7 +50,7 @@ CANDIDATES = 30
 # 意味の近さの検索に使うコレクション（改善11）
 #   chunks: チャンクを丸ごと埋め込んだもの（512トークンより後ろは埋め込みに入らない）
 #   pieces: 長いチャンクを512トークンに収まる「かけら」に分けたもの。見つかったかけらを元のチャンクに戻す
-VECTOR_INDEX = "chunks"
+VECTOR_INDEX = "pieces"
 PIECES_COLLECTION = "patch_notes_pieces"
 # pieces のとき、かけらを何件まで探すか（同じチャンクのかけらがまとまって出るので多めに探す）
 PIECE_CANDIDATES = CANDIDATES * 3
