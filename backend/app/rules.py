@@ -1,6 +1,7 @@
 """AI やデータに依存しない、決まった処理。自動テスト（tests/test_rules.py）の対象。"""
 
 import re
+from collections.abc import Callable
 
 # 質問や見出しにこれらの言葉が入っていれば PvP として扱う
 PVP_WORDS = re.compile(r"PvP|フロントライン|クリスタルコンフリクト")
@@ -118,3 +119,28 @@ def fuse_ranks(
         if chunk_id in boosted:
             scores[chunk_id] += bonus
     return sorted(scores, key=lambda i: scores[i], reverse=True)
+
+
+def split_for_embedding(text: str, count_tokens: Callable[[str], int], max_tokens: int) -> list[str]:
+    """埋め込みのモデルが読める長さに収まるよう、チャンクを「かけら」に分ける。
+
+    埋め込みのモデルは max_tokens より後ろを切り捨てるので、長いチャンクの後ろの行が検索で見つからない（m007）。
+    - 全体が max_tokens 以下なら、text をそのまま1つだけ返す
+    - 1行目（「[パッチ…] …」の見出しの行）を、すべてのかけらの先頭に付ける
+    - 2行目から後ろを、行の区切りで前から順に詰め、max_tokens を超えそうになったら次のかけらにする
+    - 1行だけで max_tokens を超える行は、切らずに、その行だけで1つのかけらにする
+    count_tokens は、文字列のトークン数を返す関数（トークナイザーには依存しない）。
+    """
+    if count_tokens(text) <= max_tokens or "\n" not in text:
+        return [text]
+    head, _, body = text.partition("\n")
+    pieces: list[str] = []
+    lines: list[str] = []
+    for line in body.split("\n"):
+        if lines and count_tokens("\n".join([head, *lines, line])) > max_tokens:
+            pieces.append("\n".join([head, *lines]))
+            lines = []
+        lines.append(line)
+    if lines:
+        pieces.append("\n".join([head, *lines]))
+    return pieces

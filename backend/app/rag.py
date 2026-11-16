@@ -47,6 +47,14 @@ DEFAULT_SEARCH = "hybrid"
 # hybrid のとき、それぞれの検索で候補にする件数
 CANDIDATES = 30
 
+# 意味の近さの検索に使うコレクション（改善11）
+#   chunks: チャンクを丸ごと埋め込んだもの（512トークンより後ろは埋め込みに入らない）
+#   pieces: 長いチャンクを512トークンに収まる「かけら」に分けたもの。見つかったかけらを元のチャンクに戻す
+VECTOR_INDEX = "chunks"
+PIECES_COLLECTION = "patch_notes_pieces"
+# pieces のとき、かけらを何件まで探すか（同じチャンクのかけらがまとまって出るので多めに探す）
+PIECE_CANDIDATES = CANDIDATES * 3
+
 # hybrid で2つの順位を合わせるときの定数（RRF でよく使われる値）
 RRF_K = 60
 
@@ -225,7 +233,58 @@ def build_chunk_jobs() -> tuple[set[str], dict[str, set[str]]]:
     return names, jobs
 
 embedder = SentenceTransformer(EMBEDDING_MODEL)
-collection = chromadb.PersistentClient(path=str(DB_DIR)).get_collection(COLLECTION)
+client = chromadb.PersistentClient(path=str(DB_DIR))
+collection = client.get_collection(COLLECTION)
+_pieces_collection = None
+
+
+def pieces_collection():
+    """かけらのコレクション。VECTOR_INDEX = "pieces" のときだけ、最初に使うときに開く。"""
+    global _pieces_collection
+    if _pieces_collection is None:
+        _pieces_collection = client.get_collection(PIECES_COLLECTION)
+    return _pieces_collection
+
+
+def vector_search(embedding: np.ndarray, pvp: bool) -> list[str]:
+    """意味の近さで、上位 CANDIDATES 件のチャンクの ID を返す。"""
+    if VECTOR_INDEX == "chunks":
+        result = collection.query(
+            query_embeddings=[embedding.tolist()],
+            n_results=CANDIDATES,
+            where={"is_pvp": pvp},
+            include=["distances"],
+        )
+        return result["ids"][0]
+
+    # pieces: かけらで探し、元のチャンクに戻す（同じチャンクのかけらは、一番上のものだけを使う）
+    result = pieces_collection().query(
+        query_embeddings=[embedding.tolist()],
+        n_results=PIECE_CANDIDATES,
+        where={"is_pvp": pvp},
+        include=["metadatas"],
+    )
+    ids: list[str] = []
+    for meta in result["metadatas"][0]:
+        if meta["parent_id"] not in ids:
+            ids.append(meta["parent_id"])
+    return ids[:CANDIDATES]
+
+
+def vector_scores(embedding: np.ndarray, ids: list[str], chunk_embeddings: dict) -> dict[str, float]:
+    """チャンクごとの意味の近さ。pieces のときは、そのチャンクのかけらの中で一番高い点数にする。"""
+    if VECTOR_INDEX == "chunks":
+        return {i: float(np.dot(embedding, chunk_embeddings[i])) for i in ids}
+    got = pieces_collection().get(
+        where={"parent_id": {"$in": ids}}, include=["metadatas", "embeddings"]
+    )
+    scores: dict[str, float] = {}
+    for meta, emb in zip(got["metadatas"], got["embeddings"]):
+        score = float(np.dot(embedding, emb))
+        parent = meta["parent_id"]
+        scores[parent] = max(scores.get(parent, score), score)
+    return scores
+
 keyword_indexes = build_keyword_indexes()
 job_names, chunk_jobs = build_chunk_jobs()
 
@@ -246,13 +305,7 @@ def search(question: str, mode: str = DEFAULT_SEARCH) -> list[dict]:
     pvp = is_pvp_text(question)
     embedding = embedder.encode(QUERY_PREFIX + question, normalize_embeddings=True)
 
-    vector = collection.query(
-        query_embeddings=[embedding.tolist()],
-        n_results=CANDIDATES,
-        where={"is_pvp": pvp},
-        include=["distances"],
-    )
-    vector_ids = vector["ids"][0]
+    vector_ids = vector_search(embedding, pvp)
 
     if mode == "vector":
         ids = vector_ids[:TOP_K]
@@ -271,15 +324,17 @@ def search(question: str, mode: str = DEFAULT_SEARCH) -> list[dict]:
         )
     }
 
+    scores = vector_scores(embedding, ids, {i: v[2] for i, v in by_id.items()})
+
     hits = []
     for rank, chunk_id in enumerate(ids, start=1):
-        doc, meta, emb = by_id[chunk_id]
+        doc, meta, _ = by_id[chunk_id]
         hits.append(
             {
                 "id": chunk_id,
                 "text": doc,
                 **meta,
-                "score": float(np.dot(embedding, emb)),
+                "score": scores[chunk_id],
                 "rank": rank,
             }
         )

@@ -43,6 +43,7 @@ python scripts\count_other_jobs.py
 
 - Windows の PowerShell で日本語を出すときは、先に `$env:PYTHONIOENCODING = "utf-8"` を設定する
 - 調べるためだけのスクリプトは `data/debug/` に置く（git に入らない）
+- 出力を見せるように頼まれたときは、そのまま data/debug/out.txt にも保存する（前の内容は上書きしてよい）。画面では省略されることがあるため 
 
 ## 今の状態（2026-11-09 時点）
 
