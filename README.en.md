@@ -37,25 +37,25 @@ Q: What is the damage falloff for Machinist's Excavator on secondary targets?
 
 Measured while adding one improvement at a time (answers generated with gemini-3.5-flash-lite). Along the way, used-up test questions and new "what changed?" questions were added, growing the set from 20 to 54 questions.
 
-| Stage | Questions | Retrieval@3 | Correct answers |
-| --- | --- | --- | --- |
-| Baseline | 20 | 87% | 19/19 *1 |
-| PvE/PvP filtering | 20 | 93% | 17/19 |
-| Prompt v2 (write out the change history first) | 20 | 93% | 19/19 *1 |
-| Prompt auto (question type and current value decided in code) | 20 | 93% | 20/20 |
-| Hybrid search | 20 | 100% | 19/20 *2 |
-| Expanded to 34 questions (baseline before the fix) | 34 | 96% | 31/34 |
-| History prompt v4 | 34 | 96% | 33/34 *2 |
-| Current-value prompt v5 | 34 | 96% | 34/34 |
-| Expanded to 44 questions (baseline before the fix) | 44 | 97% | 43/44 *2 |
-| Boost sources matching the question's job | 44 | 97% | 44/44 |
-| Expanded to 54 questions (baseline before the fix) | 54 | 96% | 53/54 *3 |
-| Split long chunks for embedding only (final) | 54 | 96% | 54/54 |
+| # | Stage | Questions | Retrieval@3 | Correct answers |
+| --- | --- | --- | --- | --- |
+| 1 | Baseline | 20 | 87% | 19/19 *1 |
+| 2 | PvE/PvP filtering | 20 | 93% | 17/19 |
+| 3 | Prompt v2 (write out the change history first) | 20 | 93% | 19/19 *1 |
+| 4 | Prompt auto (question type and current value decided in code) | 20 | 93% | 20/20 |
+| 5 | Hybrid search | 20 | 100% | 19/20 *2 |
+| 6 | Expanded to 34 questions (baseline before the fix) | 34 | 96% | 31/34 |
+| 7 | History prompt v4 | 34 | 96% | 33/34 *2 |
+| 8 | Current-value prompt v5 | 34 | 96% | 34/34 |
+| 9 | Expanded to 44 questions (baseline before the fix) | 44 | 97% | 43/44 *2 |
+| 10 | Boost sources matching the question's job | 44 | 97% | 44/44 |
+| 11 | Expanded to 54 questions (baseline before the fix) | 54 | 96% | 53/54 *3 |
+| 12 | Split long chunks for embedding only (final) | 54 | 96% | 54/54 |
 
 ```mermaid
 xychart-beta
-    title "Retrieval@3 (bars) and answer accuracy (line) by stage"
-    x-axis ["Baseline", "PvE/PvP", "v2", "auto", "hybrid", "34q before", "34q v4", "34q v5", "44q before", "44q job", "54q before", "54q split"]
+    title "Retrieval@3 (bars) and answer accuracy (line) by stage (x-axis: # in the table)"
+    x-axis ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"]
     y-axis "%" 80 --> 100
     bar [87, 93, 93, 93, 100, 96, 96, 96, 97, 97, 96, 96]
     line [100, 89, 100, 100, 95, 91, 97, 100, 98, 100, 98, 100]
