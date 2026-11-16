@@ -35,7 +35,7 @@ Q: What is the damage falloff for Machinist's Excavator on secondary targets?
 
 ### Dev set (used for tuning)
 
-Measured while adding one improvement at a time (answers generated with gemini-3.5-flash-lite). Along the way, used-up test questions and new "what changed?" questions were added, growing the set from 20 to 44 questions.
+Measured while adding one improvement at a time (answers generated with gemini-3.5-flash-lite). Along the way, used-up test questions and new "what changed?" questions were added, growing the set from 20 to 54 questions.
 
 | Stage | Questions | Retrieval@3 | Correct answers |
 | --- | --- | --- | --- |
@@ -48,22 +48,26 @@ Measured while adding one improvement at a time (answers generated with gemini-3
 | History prompt v4 | 34 | 96% | 33/34 *2 |
 | Current-value prompt v5 | 34 | 96% | 34/34 |
 | Expanded to 44 questions (baseline before the fix) | 44 | 97% | 43/44 *2 |
-| Boost sources matching the question's job (final) | 44 | 97% | 44/44 |
+| Boost sources matching the question's job | 44 | 97% | 44/44 |
+| Expanded to 54 questions (baseline before the fix) | 54 | 96% | 53/54 *3 |
+| Split long chunks for embedding only (final) | 54 | 96% | 54/54 |
 
 ```mermaid
 xychart-beta
     title "Retrieval@3 (bars) and answer accuracy (line) by stage"
-    x-axis ["Baseline", "PvE/PvP", "v2", "auto", "hybrid", "34q before", "34q v4", "34q v5", "44q before", "44q job"]
+    x-axis ["Baseline", "PvE/PvP", "v2", "auto", "hybrid", "34q before", "34q v4", "34q v5", "44q before", "44q job", "54q before", "54q split"]
     y-axis "%" 80 --> 100
-    bar [87, 93, 93, 93, 100, 96, 96, 96, 97, 97]
-    line [100, 89, 100, 100, 95, 91, 97, 100, 98, 100]
+    bar [87, 93, 93, 93, 100, 96, 96, 96, 97, 97, 96, 96]
+    line [100, 89, 100, 100, 95, 91, 97, 100, 98, 100, 98, 100]
 ```
 
 \*1 The one "what changed?" question was not scored at this point. Once it was scored, it turned out that v2 had stopped answering it (see below).
 
 \*2 The one miss (q018; n005 in the 44-question set) was answered "not found" even though the correct source ranked near the top. In both cases, a different job's source for the same attribute was also in the results (see below).
 
-The third held-out set has since been moved into the dev set as well, bringing it to 54 questions. Only retrieval has been measured on all 54: Retrieval@3 is 96% and Retrieval@8 (the 8 chunks passed to the LLM) is 99%.
+\*3 The one miss (m007) was a retrieval failure: the required source did not make the top 8. The embedding model was not reading the later part of long chunks (see below).
+
+The fourth held-out set has since been moved into the dev set as well, bringing it to 64 questions. Only retrieval has been measured on all 64: Retrieval@3 is 96% and Retrieval@8 (the 8 chunks passed to the LLM) is 100%.
 
 - **Retrieval@3**: share of required source patches found in the top 3 search results
 - **Correct answers**: current-value questions must give the right number; "what changed?" questions must mention every required patch; unanswerable questions must answer "not found"
@@ -75,24 +79,27 @@ Ten questions were committed before any results were seen, and run after the con
 | Round | Configuration | Model | Correct answers | Retrieval@3 |
 | --- | --- | --- | --- | --- |
 | 1st (t001–t010) | auto + hybrid | gemini-3.5-flash-lite | 10/10 | 93% |
-| 1st (t001–t010) | auto + hybrid | gemini-3.8-flash | 6/7 *3 | 93% |
+| 1st (t001–t010) | auto + hybrid | gemini-3.8-flash | 6/7 *4 | 93% |
 | 2nd (n001–n010) | v4 + hybrid | gemini-3.5-flash-lite | 10/10 | 100% |
 | 2nd (n001–n010) | v4, v5 + hybrid | gemini-3.5-flash-lite | 10/10 | 100% |
-| 2nd (n001–n010) | v4, v5 + hybrid | gemini-3.8-flash | not measured *4 | – |
-| 3rd (m001–m010) | v4, v5 + hybrid + job boost | gemini-3.5-flash-lite | 9/10 *5 | 92% |
+| 2nd (n001–n010) | v4, v5 + hybrid | gemini-3.8-flash | not measured *5 | – |
+| 3rd (m001–m010) | v4, v5 + hybrid + job boost | gemini-3.5-flash-lite | 9/10 *6 | 92% |
+| 4th (p001–p010) | v4, v5 + hybrid + job boost + long-chunk splitting | gemini-3.5-flash-lite | 10/10 *7 | 94% |
 
-\*3 Three questions got no answer because of API rate limits and were not re-run. The one miss was a "what changed?" question: the answer left out intermediate changes that a later patch had overwritten. This led to prompt v4 (see below).
+\*4 Three questions got no answer because of API rate limits and were not re-run. The one miss was a "what changed?" question: the answer left out intermediate changes that a later patch had overwritten. This led to prompt v4 (see below).
 
-\*4 Four attempts between Nov 3 and Nov 5 got no answers because of free-tier server load (503) and rate limits (429), so this was put on hold.
+\*5 Four attempts between Nov 3 and Nov 5 got no answers because of free-tier server load (503) and rate limits (429), so this was put on hold.
 
-\*5 All three questions shaped like q018 were correct. The one miss (m007) was a retrieval failure: the required source did not make the top 8 (see below).
+\*6 All three questions shaped like q018 were correct. The one miss (m007) was a retrieval failure: the required source did not make the top 8 (see below).
+
+\*7 The four questions shaped like m007 (the answer sits in a chunk from a long, split table) were also correct. However, these four would most likely have been correct before the fix as well (see below).
 
 ## How it works
 
 ```text
 Lodestone patch notes (23 pages)
   → extract text and tables, split into chunks (2,932)
-  → embeddings (multilingual-e5-small) + Chroma
+  → embeddings (multilingual-e5-small) + Chroma; chunks over 512 tokens are split for embedding only
   → search: filter by PvE/PvP, combine semantic and keyword matching, boost sources for the question's job
   → choose a prompt from the question's wording: v5 for "current value", v4 for "what changed"
   → answer with an LLM (llm.py; currently Gemini, falling back to a lighter model when busy)
@@ -116,7 +123,7 @@ Lodestone patch notes (23 pages)
 
 ### 2. The dev set includes a "different attribute changed later" trap
 
-A skill's potency may have last changed in 7.2 while its falloff last changed in 7.5. A model that just looks for "the newest patch" will cite a patch that never touched the attribute being asked about. Thirteen of the 54 dev questions have this shape.
+A skill's potency may have last changed in 7.2 while its falloff last changed in 7.5. A model that just looks for "the newest patch" will cite a patch that never touched the attribute being asked about. Fifteen of the 64 dev questions have this shape.
 
 Expected answers were verified by checking that each patch's "before" value matches the previous patch's "after" value; a missed change would break the chain.
 
@@ -193,7 +200,16 @@ As section 8 shows, removing other jobs' sources pushes out sources that other q
 - **Results:** the ranks of the required sources did not change for any of the 44 questions, while other-job sources in the top 8 dropped **from 87 to 37**. Answers went from 43/44 to 44/44, with no new misses.
 - **Job names:** they are not hard-coded but built from the patch note headings. New jobs arrive with expansions and major patches, so they are picked up automatically when their patch notes are ingested (for example, Beastmaster, added in 7.56).
 - **Held-out results:** in the third held-out set, all three questions shaped like q018 were correct. It is not possible to tell whether v5 or the job boost made the difference.
-- **What it surfaced:** the miss, m007, happened because a long table was split across several chunks, and the chunk holding the required row did not even make the top 30 of the semantic search. The top 8 were identical with and without the job boost, so this change did not cause it. It is left as the next issue to fix.
+- **What it surfaced:** the miss, m007, happened because a long table was split across several chunks, and the chunk holding the required row did not even make the top 30 of the semantic search. The top 8 were identical with and without the job boost, so this change did not cause it. It was fixed in the next change (section 11).
+
+### 11. Making hidden rows visible by splitting long chunks for embedding only
+
+I investigated m007 ("What changed for Viper's Reawaken?") without calling the LLM.
+
+- **Cause:** the embedding model (multilingual-e5-small) truncates everything after 512 tokens. Chunks were split at about 1,500 characters, so 332 of the 2,529 PvE chunks were longer than 512 tokens. The Reawaken row in 7.05-0018 starts at token 695, so it was **invisible to the semantic search** (85th in semantic search, 3rd in keyword search, 14th combined).
+- **Fix:** the chunks themselves are unchanged; **only for embedding**, long chunks are split into pieces of at most 512 tokens. Each piece gets the chunk's heading line, and a matching piece is mapped back to its original chunk. Chunk IDs, the keyword search and the sources passed to the LLM are unchanged. A single constant (VECTOR_INDEX) switches back to the old behavior.
+- **Results:** 7.05-0018 rose to 7th in semantic search and 5th combined, and m007 now includes the 7.05 change. The 54-question dev set went from 53/54 to 54/54. m007 was the only question whose required-source ranks changed. On the other hand, other-job sources in the top 8 rose slightly, from 46 to 50.
+- **Held-out results:** the fourth held-out set scored 10/10. It included four questions shaped like m007, but after moving them into the dev set I found that their required sources were already in the top 8 before the fix, so **they would most likely have been correct before the fix as well**. The only miss that turned into a correct answer is m007 in the dev set.
 
 ## Running locally
 
@@ -255,6 +271,7 @@ python scripts\show_context.py "PvPのナイトのホーリースピリットの
 python scripts\count_other_jobs.py
 ```
 
+- `pytest` runs the automated tests (62) for the code that does not depend on the LLM or the data. No model or API key is needed.
 - `--search-only` measures retrieval without calling the LLM, so it does not use any API quota.
 - `show_context.py` prints the sources and prompt that would be sent to the LLM, without calling it. Useful for debugging a wrong answer.
 - `count_other_jobs.py` counts the other-job sources that appear in the top 8 search results.
@@ -268,7 +285,7 @@ python scripts\count_other_jobs.py
 
 ## Known limitations
 
-- When a long table is split across several chunks, the chunk holding the required row may not be found by the semantic search (m007)
+- (Resolved) When a long table was split across several chunks, the chunk holding the required row could be missed by the semantic search (m007). Fixed by splitting long chunks for embedding only
 - For a question that names a job but whose answer is in a shared ("common") adjustment, the job boost may push the correct source down (no dev question has this shape yet)
 - The v4 and v5 improvements have not yet been verified with gemini-3.8-flash (free-tier load and rate limits)
 - When one table cell contains two changes, the second one is sometimes missed
