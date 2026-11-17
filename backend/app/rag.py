@@ -11,7 +11,10 @@ from sentence_transformers import SentenceTransformer
 
 from app.llm import LLMUnavailableError, generate  # noqa: F401（main.py と run_eval.py が rag から読み込んでいる）
 from app.rules import (
+    JOB_SECTION_WORDS,
     bigrams,
+    boosted_chunks,
+    bullet_skill_names,
     choose_prompt,
     fix_current_value,
     fuse_ranks,
@@ -19,6 +22,8 @@ from app.rules import (
     job_names_from_headings,
     job_of,
     jobs_in,
+    skill_names_in,
+    table_skill_names,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -61,6 +66,11 @@ RRF_K = 60
 # 質問のジョブと、資料の見出しのジョブが合うときに、hybrid の点数に足す値（0 なら足さない）
 # 合わない資料は外さない（ジョブで絞り込むと、ほかの問題の資料を押し出した: q024）
 JOB_BONUS = 1 / 61
+
+# 改善12: ロールや共通の調整の資料（見出しがジョブではないもの）にも、表や箇条書きのスキル名が
+# 質問の中にあれば JOB_BONUS を足す（c001〜c004: 質問のジョブの資料に、ヒーラーの資料が押し下げられた）
+# False なら、足すのは質問のジョブの資料だけ（前の動き）
+ROLE_SKILL_BOOST = False
 
 RULES = """ルール:
 - 資料に書かれていないことは答えず、「パッチノートからは分かりませんでした」と答える
@@ -232,6 +242,24 @@ def build_chunk_jobs() -> tuple[set[str], dict[str, set[str]]]:
     jobs = {c["id"]: (jobs_in(c["headings"][-1], names) if c["headings"] else set()) for c in chunks}
     return names, jobs
 
+
+def build_role_skills(names: set[str]) -> tuple[dict[bool, dict[str, set[str]]], set[str]]:
+    """ロールや共通のチャンクのスキル名の対応（PvP と PvP 以外に分ける）と、すべてのスキル名を作る。
+
+    ロールや共通のチャンク: ジョブの調整の見出し（JOB_SECTION_WORDS）の下で、一番下の見出しからジョブが見つからないもの。
+    すべてのスキル名（長い名前の中の短い名前を外すために使う）: 全チャンクの表の1列目と、ロールや共通のチャンクの箇条書きの名前。
+    """
+    chunks = [json.loads(line) for line in CHUNKS.open(encoding="utf-8")]
+    role_skills: dict[bool, dict[str, set[str]]] = {True: {}, False: {}}
+    all_skills: set[str] = set()
+    for c in chunks:
+        all_skills |= table_skill_names(c["text"])
+        h = c["headings"]
+        if len(h) >= 2 and all(w in h[-2] for w in JOB_SECTION_WORDS) and not jobs_in(h[-1], names):
+            role_skills[is_pvp_chunk(c)][c["id"]] = skill_names_in(c["text"])
+            all_skills |= bullet_skill_names(c["text"])
+    return role_skills, all_skills
+
 embedder = SentenceTransformer(EMBEDDING_MODEL)
 client = chromadb.PersistentClient(path=str(DB_DIR))
 collection = client.get_collection(COLLECTION)
@@ -287,6 +315,7 @@ def vector_scores(embedding: np.ndarray, ids: list[str], chunk_embeddings: dict)
 
 keyword_indexes = build_keyword_indexes()
 job_names, chunk_jobs = build_chunk_jobs()
+role_skills, all_skills = build_role_skills(job_names)
 
 def keyword_search(question: str, pvp: bool) -> list[str]:
     """キーワードの一致で、上位 CANDIDATES 件のチャンクの ID を返す。"""
@@ -313,6 +342,9 @@ def search(question: str, mode: str = DEFAULT_SEARCH) -> list[dict]:
         # 2つの検索の順位から点数を付けて足し合わせる（RRF）。質問のジョブと合う資料には JOB_BONUS を足す
         job = job_of(question, job_names)
         boosted = {i for i, jobs in chunk_jobs.items() if job in jobs} if job else set()
+        if ROLE_SKILL_BOOST:
+            # 質問と同じ PvE／PvP のロールや共通のチャンクだけを見る
+            boosted = boosted_chunks(question, job, chunk_jobs, role_skills[pvp], all_skills)
         ranked = fuse_ranks([vector_ids, keyword_search(question, pvp)], RRF_K, boosted, JOB_BONUS)
         ids = ranked[:TOP_K]
         

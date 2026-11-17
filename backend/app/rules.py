@@ -101,6 +101,72 @@ def job_of(text: str, names: set[str]) -> str | None:
     return next(iter(found)) if len(found) == 1 else None
 
 
+# 箇条書きの「- スキル名」の行（例: 7.16-0021 の「- 浄化」）。文の箇条書きと分けるため、空白や句読点のない短い行だけ
+BULLET_SKILL = re.compile(r"^-\s*([^\s。、，,：:（）()]{1,30})$")
+
+
+def table_skill_names(text: str) -> set[str]:
+    """チャンクの本文の表から、行の1列目のスキル名を取り出す。見出しの行と区切りの行は除く。
+
+    見出しの行は「名称」の表だけでなく「アイテム名」などの表もあるので、区切りの行（|---|）のすぐ上の行を見出しとみなす。
+    """
+    rows: list[list[str]] = []
+    for line in text.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [x.strip() for x in line.strip().strip("|").split("|")]
+        if all(set(x) <= set("-: ") for x in cells):
+            if rows:
+                rows.pop()  # 区切りの行のすぐ上は見出しの行
+            continue
+        rows.append(cells)
+    return {cells[0] for cells in rows if len(cells) >= 2 and cells[0] and cells[0] != "名称"}
+
+
+def bullet_skill_names(text: str) -> set[str]:
+    """チャンクの本文から、箇条書きの「- スキル名」の行のスキル名を取り出す。"""
+    names = set()
+    for line in text.splitlines():
+        m = BULLET_SKILL.match(line.strip())
+        if m:
+            names.add(m.group(1))
+    return names
+
+
+def skill_names_in(text: str) -> set[str]:
+    """チャンクの本文から、表の行の1列目と、箇条書きの「- スキル名」の行のスキル名を取り出す。"""
+    return table_skill_names(text) | bullet_skill_names(text)
+
+
+def skills_in(question: str, names: set[str]) -> set[str]:
+    """質問の中にあるスキル名を返す。ほかに見つかった、より長い名前の中に入っている名前は外す（jobs_in と同じ考え方）。
+
+    例: 「シールドスマイト」がある質問では「スマイト」を外す。
+    """
+    return jobs_in(question, names)
+
+
+def boosted_chunks(
+    question: str,
+    job: str | None,
+    chunk_jobs: dict[str, set[str]],
+    role_chunk_skills: dict[str, set[str]],
+    all_skills: set[str],
+) -> set[str]:
+    """JOB_BONUS を足すチャンクの ID を返す（改善12）。
+
+    - 見出しのジョブが質問のジョブと合うチャンク
+    - ロールや共通のチャンク（role_chunk_skills）のうち、表や箇条書きのスキル名が質問の中にあるもの
+    質問のジョブが決まらない（None）ときは空にする。
+    """
+    if job is None:
+        return set()
+    found = skills_in(question, all_skills)
+    ids = {i for i, jobs in chunk_jobs.items() if job in jobs}
+    ids |= {i for i, skills in role_chunk_skills.items() if skills & found}
+    return ids
+
+
 def fuse_ranks(
     rankings: list[list[str]],
     k: int,

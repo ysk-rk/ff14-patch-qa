@@ -1,6 +1,14 @@
 """ジョブの名前の集め方、ジョブの判定、順位の合わせ方のテスト。"""
 
-from app.rules import fuse_ranks, job_names_from_headings, job_of, jobs_in
+from app.rules import (
+    boosted_chunks,
+    fuse_ranks,
+    job_names_from_headings,
+    job_of,
+    jobs_in,
+    skill_names_in,
+    skills_in,
+)
 
 ACTION = "アクション／特性において、以下の調整が行われます。"
 PVP_ACTION = "PvPアクションにおいて、以下の調整が行われます。"
@@ -70,3 +78,66 @@ def test_fuse_ranks_bonus_moves_up_without_removing_others():
 def test_fuse_ranks_bonus_does_not_add_new_candidates():
     out = fuse_ranks([["a"], ["b"]], k=60, boosted={"z"}, bonus=1.0)
     assert "z" not in out
+
+
+# 改善12: ロールや共通のチャンクのスキル名
+
+ROLE_TABLE = """[パッチ7.31] バトル関連 > PvP全般 > PvPアクションにおいて、以下の調整が行われます。 > 共通
+| 名称 | 詳細 |
+| --- | --- |
+| 浄化 | ・消費MPが 2,500 → 2,000 に変更されます。 |
+| 快気 | ・消費MPが 2,500 → 2,000 に変更されます。 |"""
+
+# 7.16-0021 の形（表がなく、箇条書きだけ）
+ROLE_BULLETS = """[パッチ7.16] バトル関連 > PvP全般 > 以下のPvPアクションにおいて、実行から効果が発揮されるまでの時間が短縮されます。 > 共通
+- 快気
+
+- 浄化"""
+
+ALL_SKILLS = {"浄化", "快気", "防御", "スマイト", "シールドスマイト", "ヒール", "ホーリースピリット"}
+CHUNK_JOBS = {"knight": {"ナイト"}, "monk": {"格闘士", "モンク"}}
+ROLE_CHUNK_SKILLS = {"common": {"浄化", "快気", "防御"}, "melee": {"スマイト"}, "healer": {"ヒール"}}
+
+
+def test_skill_names_from_table_rows():
+    assert skill_names_in(ROLE_TABLE) == {"浄化", "快気"}
+
+
+def test_skill_names_from_bullets_without_table():
+    assert skill_names_in(ROLE_BULLETS) == {"快気", "浄化"}
+
+
+def test_skill_names_skip_sentence_bullets():
+    text = "見出し\n- 「エスナ」を実行すると、カットシーンが再生されない。\n- 浄化"
+    assert skill_names_in(text) == {"浄化"}
+
+
+def test_skills_in_drops_name_inside_longer_name():
+    assert skills_in("PvPのナイトのシールドスマイトの威力は？", ALL_SKILLS) == {"シールドスマイト"}
+
+
+def test_skills_in_keeps_two_letter_names():
+    assert skills_in("PvPのナイトの浄化と防御は何が変わった？", ALL_SKILLS) == {"浄化", "防御"}
+
+
+def test_boosted_chunks_adds_role_chunk_with_skill_in_question():
+    q = "PvPのナイトの浄化は何が変わった？"
+    assert boosted_chunks(q, "ナイト", CHUNK_JOBS, ROLE_CHUNK_SKILLS, ALL_SKILLS) == {"knight", "common"}
+
+
+def test_boosted_chunks_skips_role_chunk_without_skill_in_question():
+    q = "PvPのナイトのホーリースピリットの威力は？"
+    assert boosted_chunks(q, "ナイト", CHUNK_JOBS, ROLE_CHUNK_SKILLS, ALL_SKILLS) == {"knight"}
+
+
+def test_boosted_chunks_skips_shorter_name_inside_longer_name():
+    q = "PvPのナイトのシールドスマイトの威力は？"
+    assert boosted_chunks(q, "ナイト", CHUNK_JOBS, ROLE_CHUNK_SKILLS, ALL_SKILLS) == {"knight"}
+
+
+def test_boosted_chunks_empty_when_job_is_none():
+    # クラフターはジョブの一覧にないので、job_of は None になる
+    roles = {"crafter": {"真価", "上級加工"}}
+    q = "木工師の真価は？"
+    assert job_of(q, NAMES) is None
+    assert boosted_chunks(q, None, CHUNK_JOBS, roles, ALL_SKILLS | {"真価", "上級加工"}) == set()
