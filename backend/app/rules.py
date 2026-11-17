@@ -112,7 +112,7 @@ NEW_JOB_PATTERN = re.compile(r"(?:新たなジョブ|リミテッドジョブ)�
 # 8.0 では新しいジョブが2つ出るので、2つ目のジョブも、調整のパッチを待たずに名前の一覧に入れる。
 # 「新たなジョブ」「リミテッドジョブ」のすぐあとに続く「」の並び（間は何もないか、「と」「、」「・」のどれか1文字）だけを取る
 # （「新たなジョブ「A」が実装されます。クエスト「B」を…」の B は取らない）。False なら前の動き（NEW_JOB_PATTERN）
-NEW_JOB_ALL_NAMES = False
+NEW_JOB_ALL_NAMES = True
 
 NEW_JOB_NAMES_PATTERN = re.compile(r"(?:新たなジョブ|リミテッドジョブ)(「[^」]+」(?:[と、・]?「[^」]+」)*)")
 QUOTED_NAME = re.compile(r"「([^」]+)」")
