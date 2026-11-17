@@ -55,7 +55,7 @@ def fix_current_value(text: str) -> str:
 # 7.0 のジョブのスキルの調整はパッチノートの本文になく（「詳しくは『こちら』」でジョブガイドへ）、
 # 8.0 も同じ作りなら、7.x の最後の変更の値を今の値として答えてしまうため、【今の値】を「分かりませんでした」に差し替える
 # 対象は、今の値の質問（auto で v5）で、質問にジョブ名があるものだけ。False なら前の動き
-EXPANSION_GUARD = False
+EXPANSION_GUARD = True
 
 EXPANSION_UNKNOWN = (
     "{mark}分かりませんでした（最後の変更はパッチ{version}ですが、そのあと拡張パッケージ{expansion}.0で"
