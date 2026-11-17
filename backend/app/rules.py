@@ -51,6 +51,54 @@ def fix_current_value(text: str) -> str:
     return "\n".join([current, *lines])
 
 
+# 改善14: 拡張パッケージの境目で、古い値を今の値として答えない
+# 7.0 のジョブのスキルの調整はパッチノートの本文になく（「詳しくは『こちら』」でジョブガイドへ）、
+# 8.0 も同じ作りなら、7.x の最後の変更の値を今の値として答えてしまうため、【今の値】を「分かりませんでした」に差し替える
+# 対象は、今の値の質問（auto で v5）で、質問にジョブ名があるものだけ。False なら前の動き
+EXPANSION_GUARD = False
+
+EXPANSION_UNKNOWN = (
+    "{mark}分かりませんでした（最後の変更はパッチ{version}ですが、そのあと拡張パッケージ{expansion}.0で"
+    "スキルが作り直された可能性があり、パッチノートだけでは今の値を確かめられません）"
+)
+
+
+def major_version(version: str) -> int:
+    """版の先頭の数（拡張パッケージの番号）を返す（例: "7.57" → 7、"8.01" → 8）。"""
+    return int(version.split(".")[0])
+
+
+def latest_expansion(versions) -> int:
+    """取り込んだパッチの版の一覧から、最新の拡張パッケージの番号を返す（コードに 8 などを書かない）。"""
+    return max(major_version(v) for v in versions)
+
+
+def guard_expansion(text: str, question: str, expansion: int, names: set[str]) -> str:
+    """fix_current_value のあとの答えで、根拠のパッチが最新の拡張パッケージより前なら【今の値】を差し替える。
+
+    - 経緯の質問（choose_prompt が "v1"）と、質問にジョブ名がない質問は、そのまま返す
+    - 【変更の経緯】がない答え（「分かりませんでした」など）は、そのまま返す
+    - 根拠のパッチは fix_current_value と同じく、経緯の中で一番新しいパッチ。【変更の経緯】はそのまま残す
+    """
+    if choose_prompt(question) == "v1" or job_of(question, names) is None:
+        return text
+    lines = text.splitlines()
+    changes = [m for line in lines if (m := CHANGE_LINE.match(line.replace("**", "")))]
+    if not changes:
+        return text
+
+    version = max(changes, key=lambda m: float(m.group(1))).group(1)
+    if major_version(version) >= expansion:
+        return text
+
+    unknown = EXPANSION_UNKNOWN.format(mark=CURRENT_MARK, version=version, expansion=expansion)
+    for i, line in enumerate(lines):
+        if CURRENT_MARK in line:
+            lines[i] = unknown
+            return "\n".join(lines)
+    return "\n".join([unknown, *lines])
+
+
 # ジョブの調整の見出し（一つ上の見出し）に含まれる言葉
 #   例: 「アクション／特性において、以下の調整が行われます。」「PvPアクションにおいて、以下の調整が行われます。」
 #   クイックパネルやヴァリアントアクションなど、ジョブではないアクションの見出しには「において」がない

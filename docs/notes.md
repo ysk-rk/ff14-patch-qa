@@ -1051,3 +1051,28 @@ AI を呼ぶ評価を流さない理由:
 
 - 本物の 8.0 のパッチノートが、7.0 と同じ作りになるかは、2月まで分からない
 - 差し替えたあとの文を、AI ではなくコードで作るので、答えの言い回しは AI の答えと少し違う
+
+### EXPANSION_GUARD = False で入れた（AI は呼んでいない）
+
+先に確かめたこと（入れる前に足した確かめ。data/debug/check_history_versions.py）:
+
+- 評価用の54問を lite・auto で流した一番新しい結果は eval/results/20261116-0738_gemini-3.5-flash-lite_auto_hybrid.jsonl
+- その答えの【変更の経緯】にある「パッチX.XX」は75個（CHANGE_LINE に合う行も75行）。版の先頭の数が 7 より小さいものは0個。出てきた版は 7.0〜7.5
+- 参考に、68問の一番新しい結果（20261116-2258）でも見た。85個で、7 より小さいものは0個
+
+作ったもの:
+
+- rules.py に、EXPANSION_GUARD = False、major_version（版の先頭の数）、latest_expansion（版の一覧から最新の拡張パッケージ）、guard_expansion（【今の値】の差し替え）、差し替えの文 EXPANSION_UNKNOWN を置いた。rag.py を import しないので、CI（requirements-test.txt だけ）でテストできる
+  - EXPANSION_GUARD は、ROLE_SKILL_BOOST などと違って rules.py に置き、rag.py が読み込む。True にするときは rules.py を直す
+  - guard_expansion は、経緯の質問（choose_prompt が "v1"）と、質問にジョブ名がない（job_of が None）ときは、そのまま返す。根拠のパッチは fix_current_value と同じく、経緯の中で一番新しいパッチ
+  - fix_current_value は変えていない（同じ数行を guard_expansion にも書いた）
+- rag.py では、auto のとき fix_current_value のあとで、EXPANSION_GUARD が True で、使ったプロンプトが v5 で、質問にジョブ名があるときだけ guard_expansion を呼ぶ。最新の拡張パッケージは、chunks.jsonl の版から作る（newest_expansion）
+- 作り物のチャンク：backend/tests/fixtures/chunks_7x.jsonl（7.0 は「こちら」だけ、7.1、7.5）、chunks_8x.jsonl（それに 8.0 の新しいジョブと「こちら」だけ、8.01 を足したもの）。ジョブ名「テスト騎士」「テスト術士」、スキル名「ためし斬り」「ためし突き」も本文も、自分で書いた
+- 自動テスト：backend/tests/test_expansion_guard.py。完了の条件2の6つに加えて、「経緯がない答え（分かりませんでした）は差し替わらない」を1つ足した（基準の6つの外）。「8.0 または 8.01」は、8.01（経緯の順を入れ替えた2通り）と 8.0 を別のテストにした
+
+確かめたこと:
+
+- pytest：76個 → 85個、すべて通った（足したのは9個。test 関数8つのうち1つが2通り）
+- 68問の検索だけ（20261117-1529）を、前の 2141 と 2247 と比べた（data/debug/compare_search_only.py）。正解の順位（ranks）と retrieved が違う問題は、どちらとも0問
+- rag.py と rules.py の git diff で、消えた行は0行（足しただけ）
+- 判定：完了の条件1を満たした。条件2の自動テストも通った（テストは guard_expansion を直接呼ぶので、EXPANSION_GUARD の値によらない）。次は EXPANSION_GUARD = True にして、条件3を確かめる

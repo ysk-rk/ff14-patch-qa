@@ -11,6 +11,7 @@ from sentence_transformers import SentenceTransformer
 
 from app.llm import LLMUnavailableError, generate  # noqa: F401（main.py と run_eval.py が rag から読み込んでいる）
 from app.rules import (
+    EXPANSION_GUARD,
     JOB_SECTION_WORDS,
     bigrams,
     boosted_chunks,
@@ -18,11 +19,13 @@ from app.rules import (
     choose_prompt,
     fix_current_value,
     fuse_ranks,
+    guard_expansion,
     is_pvp_text,
     job_names_from_headings,
     job_of,
     jobs_in,
     label_role_heading,
+    latest_expansion,
     role_jobs_from_headings,
     skill_names_in,
     table_skill_names,
@@ -330,6 +333,8 @@ keyword_indexes = build_keyword_indexes()
 job_names, chunk_jobs = build_chunk_jobs()
 role_skills, all_skills = build_role_skills(job_names)
 role_jobs = build_role_jobs(job_names)
+# 改善14: 取り込んだチャンクの版から作った、最新の拡張パッケージの番号
+newest_expansion = latest_expansion({json.loads(line)["version"] for line in CHUNKS.open(encoding="utf-8")})
 
 def keyword_search(question: str, pvp: bool) -> list[str]:
     """キーワードの一致で、上位 CANDIDATES 件のチャンクの ID を返す。"""
@@ -410,6 +415,9 @@ def answer(
     # auto のときだけ、今の値をコードで決め直す（v2 や v3 単体の評価には手を加えない）
     if prompt == "auto":
         text = fix_current_value(text)
+        # 改善14: 今の値の質問（v5）で、質問にジョブ名があるときだけ（guard_expansion の中でも同じことを確かめる）
+        if EXPANSION_GUARD and used == AUTO_CURRENT_PROMPT and job_of(question, job_names):
+            text = guard_expansion(text, question, newest_expansion, job_names)
 
     return {
         "answer": text,
