@@ -1171,3 +1171,19 @@ AI を呼ぶ評価を流さない理由:
 言えないこと（先に書いておく）:
 
 - 本物の 8.0 の見出しが、どの書き方になるかは2月まで分からない。上の3つ以外の書き方なら、取れないことがある
+
+### NEW_JOB_ALL_NAMES = False で入れた（AI は呼んでいない）
+
+作ったもの:
+
+- rules.py に、NEW_JOB_ALL_NAMES = False、新しい取り方の正規表現 NEW_JOB_NAMES_PATTERN（と、「」の中を取る QUOTED_NAME）、関数 new_job_names を置いた。NEW_JOB_PATTERN は消していない
+- job_names_from_headings に引数 all_names を足した。初めの値は NEW_JOB_ALL_NAMES。rag.py と scripts の呼び方は変えていない
+- 作り物のチャンク：backend/tests/fixtures/chunks_8x_two_new_jobs.jsonl（新しく足した。今のファイルは直していない）。8.0 に「新たなジョブ「テスト弓士」「テスト槌士」が実装されます。」の見出しだけがあり、その2つのジョブの調整の見出しはない
+- 自動テスト：backend/tests/test_new_job_names.py。完了の条件2の7つ（見出しの6つは1つのテストを6通りで流す）。テストでは all_names に True を渡す。加えて、「all_names に False を渡すと、7.0 の形の見出しから1つ目の名前だけを取る」を1つ足した（基準の7つの外）
+
+確かめたこと:
+
+- pytest：85個 → 93個、すべて通った（足したのは8個）
+- 68問の検索だけ（20261117-1623）を 20261117-1539 と比べた。ranks と retrieved が違う問題は0問
+- rules.py の git diff で消えた行は2行で、どちらも書き換えたもの：job_names_from_headings の def の行（引数を足した）と、NEW_JOB_PATTERN.findall で名前を足す行（new_job_names を呼ぶ形にした）。ほかに消えた行はない
+- 判定：完了の条件1を満たした。条件2の自動テストも通った

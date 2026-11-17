@@ -107,6 +107,16 @@ JOB_SECTION_WORDS = ("アクション", "において")
 # 新しいジョブが追加されたときの見出し（例:「新たなジョブ「魔獣使い」が実装されます。」）
 NEW_JOB_PATTERN = re.compile(r"(?:新たなジョブ|リミテッドジョブ)「(.+?)」")
 
+# 改善14: 新しいジョブの見出しに名前が2つ以上あるとき、すべての名前を取る
+# NEW_JOB_PATTERN は「新たなジョブ「ヴァイパー」「ピクトマンサー」」から、ヴァイパーだけを取る。
+# 8.0 では新しいジョブが2つ出るので、2つ目のジョブも、調整のパッチを待たずに名前の一覧に入れる。
+# 「新たなジョブ」「リミテッドジョブ」のすぐあとに続く「」の並び（間は何もないか、「と」「、」「・」のどれか1文字）だけを取る
+# （「新たなジョブ「A」が実装されます。クエスト「B」を…」の B は取らない）。False なら前の動き（NEW_JOB_PATTERN）
+NEW_JOB_ALL_NAMES = False
+
+NEW_JOB_NAMES_PATTERN = re.compile(r"(?:新たなジョブ|リミテッドジョブ)(「[^」]+」(?:[と、・]?「[^」]+」)*)")
+QUOTED_NAME = re.compile(r"「([^」]+)」")
+
 # ジョブの調整の見出しの下にあっても、ジョブではないもの（共通の調整と、ロールの名前）
 # ロールの名前は、ジョブと違ってほとんど増えない
 NOT_JOB_WORDS = ("共通", "DPS", "ヒーラー", "タンク")
@@ -116,17 +126,28 @@ NOT_JOB_WORDS = ("共通", "DPS", "ヒーラー", "タンク")
 OLDER_JOBS = ("青魔道士",)
 
 
-def job_names_from_headings(headings_list: list[list[str]]) -> set[str]:
+def new_job_names(heading: str, all_names: bool = NEW_JOB_ALL_NAMES) -> list[str]:
+    """新しいジョブの見出しから、ジョブの名前を取り出す。
+
+    all_names が True なら、続く「」の名前をすべて取る（NEW_JOB_NAMES_PATTERN）。False なら1つ目だけ（NEW_JOB_PATTERN）。
+    """
+    if not all_names:
+        return [name.strip() for name in NEW_JOB_PATTERN.findall(heading)]
+    return [name.strip() for run in NEW_JOB_NAMES_PATTERN.findall(heading) for name in QUOTED_NAME.findall(run)]
+
+
+def job_names_from_headings(headings_list: list[list[str]], all_names: bool = NEW_JOB_ALL_NAMES) -> set[str]:
     """チャンクの見出しから、ジョブとクラスの名前を集める。
 
     - ジョブの調整の見出し（JOB_SECTION_WORDS を含む）の下の、一番下の見出しを「／」で分ける（例:「格闘士／モンク」）
     - 新しいジョブの見出し（NEW_JOB_PATTERN）から、ジョブの名前を取り出す
+      （all_names が True なら、見出しにある名前をすべて取る。new_job_names を参照）
     ジョブの一覧をコードに書かずにデータから作るので、新しいジョブが増えても、そのパッチノートを取り込めば入る。
     """
     names = set(OLDER_JOBS)
     for headings in headings_list:
         for heading in headings:
-            names.update(name.strip() for name in NEW_JOB_PATTERN.findall(heading))
+            names.update(new_job_names(heading, all_names))
         if len(headings) < 2 or not all(w in headings[-2] for w in JOB_SECTION_WORDS):
             continue
         for name in headings[-1].split("／"):
