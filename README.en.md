@@ -67,7 +67,7 @@ xychart-beta
 
 \*3 The one miss (m007) was a retrieval failure: the required source did not make the top 8. The embedding model was not reading the later part of long chunks (see below).
 
-The fourth held-out set has since been moved into the dev set as well, bringing it to 64 questions. Only retrieval has been measured on all 64: Retrieval@3 is 96% and Retrieval@8 (the 8 chunks passed to the LLM) is 100%.
+The fourth held-out set has since been moved into the dev set as well, and four questions that name a job but whose answer is in a role adjustment (c001–c004) were added, bringing it to 68 questions. Only retrieval has been measured on all 68: Retrieval@3 is 93% and Retrieval@8 (the 8 chunks passed to the LLM) is 98%. Retrieval@8 is below 100% because c003's required source does not make the top 8 (see below).
 
 - **Retrieval@3**: share of required source patches found in the top 3 search results
 - **Correct answers**: current-value questions must give the right number; "what changed?" questions must mention every required patch; unanswerable questions must answer "not found"
@@ -123,7 +123,7 @@ Lodestone patch notes (23 pages)
 
 ### 2. The dev set includes a "different attribute changed later" trap
 
-A skill's potency may have last changed in 7.2 while its falloff last changed in 7.5. A model that just looks for "the newest patch" will cite a patch that never touched the attribute being asked about. Fifteen of the 64 dev questions have this shape.
+A skill's potency may have last changed in 7.2 while its falloff last changed in 7.5. A model that just looks for "the newest patch" will cite a patch that never touched the attribute being asked about. Fifteen of the 68 dev questions have this shape.
 
 Expected answers were verified by checking that each patch's "before" value matches the previous patch's "after" value; a missed change would break the chain.
 
@@ -179,8 +179,10 @@ Changes that did not meet the pre-set criteria were reverted and documented.
 | --- | --- | --- |
 | Split multiple changes in one table cell into separate rows | Stop the second change from being missed | Another question's source dropped out of the top 3 |
 | Filter retrieval by the job named in the question | Stop the LLM from being confused by a similar change for another job (q018) | Another question's required history source was pushed out of the top 8 |
+| Also boost role and shared sources when a skill name in them matches the question (change 12) | Stop the correct source from being pushed down when the answer is in a role adjustment (see section 12) | Retrieval was fixed, but the LLM's answers did not meet the criteria (3 misses) |
+| Add the job names to role-source headings, only in what is passed to the LLM (change 13) | Stop the LLM from treating a correct source headed "Healer" as another job's source | The LLM's answers did not meet the criteria (1 question still missed) |
 
-In both cases, a change that fixed one question pushed out a source another question needed. Only 8 chunks are passed to the LLM, so removing one lets another one in.
+In the first two cases, a change that fixed one question pushed out a source another question needed. Only 8 chunks are passed to the LLM, so removing one lets another one in.
 
 ### 9. Separating the LLM layer so other models can be compared
 
@@ -210,6 +212,15 @@ I investigated m007 ("What changed for Viper's Reawaken?") without calling the L
 - **Fix:** the chunks themselves are unchanged; **only for embedding**, long chunks are split into pieces of at most 512 tokens. Each piece gets the chunk's heading line, and a matching piece is mapped back to its original chunk. Chunk IDs, the keyword search and the sources passed to the LLM are unchanged. A single constant (VECTOR_INDEX) switches back to the old behavior.
 - **Results:** 7.05-0018 rose to 7th in semantic search and 5th combined, and m007 now includes the 7.05 change. The 54-question dev set went from 53/54 to 54/54. m007 was the only question whose required-source ranks changed. On the other hand, other-job sources in the top 8 rose slightly, from 46 to 50.
 - **Held-out results:** the fourth held-out set scored 10/10. It included four questions shaped like m007, but after moving them into the dev set I found that their required sources were already in the top 8 before the fix, so **they would most likely have been correct before the fix as well**. The only miss that turned into a correct answer is m007 in the dev set.
+
+### 12. Looking for my own weak spots, and checking them
+
+Boosting sources that match the question's job (section 10) could push the correct source down when the answer is in a role adjustment, such as one headed "Healer".
+
+- **How I checked:** I searched the data for this shape. In PvE there was only one row, Esuna (7.1, cast time 1.5s → instant), so I wrote four questions, one for each healer job (c001–c004), and added them to the dev set. c003's required source dropped from 2nd to 9th, out of the top 8.
+- **I tried two fixes, and reverted both.** Change 12 fixed retrieval, but the LLM gave up on three questions. The same patch, 7.1, has **another job's (Black Mage's) Despair change, "cast time 3s → instant"**, the same shape as q018. Change 13 relabeled the heading passed to the LLM as "Healer (White Mage / Scholar / Astrologian / Sage)"; two questions became correct, but one still missed.
+- **Lesson:** with one run per question, I could not separate the effect from the smaller model's run-to-run variation. Next time I check something on only a few questions, I will decide before running how many times to run each one and how many correct answers count as an effect.
+- The code is kept but set to False, so either change can be retried by flipping one constant. The 11 held-out questions for this shape (PvP) have not been run yet.
 
 ## Running locally
 
@@ -271,11 +282,11 @@ python scripts\show_context.py "PvPのナイトのホーリースピリットの
 python scripts\count_other_jobs.py
 ```
 
-- `pytest` runs the automated tests (62) for the code that does not depend on the LLM or the data. No model or API key is needed.
+- `pytest` runs the automated tests (76) for the code that does not depend on the LLM or the data. No model or API key is needed.
 - `--search-only` measures retrieval without calling the LLM, so it does not use any API quota.
 - `show_context.py` prints the sources and prompt that would be sent to the LLM, without calling it. Useful for debugging a wrong answer.
 - `count_other_jobs.py` counts the other-job sources that appear in the top 8 search results.
-- A held-out set (`eval/test_questions.jsonl`) can be run with `--questions ..\eval\test_questions.jsonl`. Please don't use it to make tuning decisions. The current one has been used and moved into the dev set; a new one will be written before the next improvement.
+- A held-out set (`eval/test_questions.jsonl`) can be run with `--questions ..\eval\test_questions.jsonl`. Please don't use it to make tuning decisions. It currently holds r001–r011 (role and shared PvP skills, 11 questions), which will not be run until the final form of a fix for this shape (a question that names a job, with the answer in a role or shared adjustment) is decided.
 
 ## About the data
 
@@ -286,7 +297,7 @@ python scripts\count_other_jobs.py
 ## Known limitations
 
 - (Resolved) When a long table was split across several chunks, the chunk holding the required row could be missed by the semantic search (m007). Fixed by splitting long chunks for embedding only
-- For a question that names a job but whose answer is in a shared ("common") adjustment, the job boost may push the correct source down (no dev question has this shape yet)
+- For a question that names a job but whose answer is in a role or shared adjustment, the job boost pushes the correct source down (confirmed: c003 drops from 2nd to 9th). In PvE, the only row of this shape is Esuna. Two fixes were tried and both reverted because they did not meet the criteria
 - The v4 and v5 improvements have not yet been verified with gemini-3.8-flash (free-tier load and rate limits)
 - When one table cell contains two changes, the second one is sometimes missed
 - The question type is decided by keyword matching, so unexpected phrasings can be misclassified
