@@ -22,6 +22,8 @@ from app.rules import (
     job_names_from_headings,
     job_of,
     jobs_in,
+    label_role_heading,
+    role_jobs_from_headings,
     skill_names_in,
     table_skill_names,
 )
@@ -71,6 +73,11 @@ JOB_BONUS = 1 / 61
 # 質問の中にあれば JOB_BONUS を足す（c001〜c004: 質問のジョブの資料に、ヒーラーの資料が押し下げられた）
 # False なら、足すのは質問のジョブの資料だけ（前の動き）
 ROLE_SKILL_BOOST = False
+
+# 改善13: AI に渡す資料のうち、ロールや共通のチャンク（role_skills と同じもの）の見出しの行に、ジョブ名を書き足す
+# （c001、c002、c004: 見出しが「ヒーラー」の正解の資料を、質問のジョブの資料ではないとみなしたとみられる）
+# 検索（埋め込み、キーワード、順位）は変えない。False なら前の動き
+ROLE_HEADING_JOBS = True
 
 RULES = """ルール:
 - 資料に書かれていないことは答えず、「パッチノートからは分かりませんでした」と答える
@@ -260,6 +267,12 @@ def build_role_skills(names: set[str]) -> tuple[dict[bool, dict[str, set[str]]],
             all_skills |= bullet_skill_names(c["text"])
     return role_skills, all_skills
 
+
+def build_role_jobs(names: set[str]) -> dict[str, list[str]]:
+    """ロールクエストの見出しから、ロールとジョブの対応を作る（改善13）。"""
+    chunks = [json.loads(line) for line in CHUNKS.open(encoding="utf-8")]
+    return role_jobs_from_headings([c["headings"] for c in chunks], names)
+
 embedder = SentenceTransformer(EMBEDDING_MODEL)
 client = chromadb.PersistentClient(path=str(DB_DIR))
 collection = client.get_collection(COLLECTION)
@@ -316,6 +329,7 @@ def vector_scores(embedding: np.ndarray, ids: list[str], chunk_embeddings: dict)
 keyword_indexes = build_keyword_indexes()
 job_names, chunk_jobs = build_chunk_jobs()
 role_skills, all_skills = build_role_skills(job_names)
+role_jobs = build_role_jobs(job_names)
 
 def keyword_search(question: str, pvp: bool) -> list[str]:
     """キーワードの一致で、上位 CANDIDATES 件のチャンクの ID を返す。"""
@@ -370,6 +384,13 @@ def search(question: str, mode: str = DEFAULT_SEARCH) -> list[dict]:
                 "rank": rank,
             }
         )
+    if ROLE_HEADING_JOBS:
+        # AI に渡す本文の1行目（[パッチ…] の見出しの行）だけを書き換える。順位はもう決まっている
+        role_ids = role_skills[True].keys() | role_skills[False].keys()
+        for hit in hits:
+            if hit["id"] in role_ids:
+                first, sep, rest = hit["text"].partition("\n")
+                hit["text"] = label_role_heading(first, role_jobs) + sep + rest
     # 古い順に並べると、資料の中で変更の流れが追いやすくなる
     return sorted(hits, key=lambda h: h["order"])
 

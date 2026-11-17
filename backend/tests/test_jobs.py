@@ -6,6 +6,8 @@ from app.rules import (
     job_names_from_headings,
     job_of,
     jobs_in,
+    label_role_heading,
+    role_jobs_from_headings,
     skill_names_in,
     skills_in,
 )
@@ -141,3 +143,46 @@ def test_boosted_chunks_empty_when_job_is_none():
     q = "木工師の真価は？"
     assert job_of(q, NAMES) is None
     assert boosted_chunks(q, None, CHUNK_JOBS, roles, ALL_SKILLS | {"真価", "上級加工"}) == set()
+
+
+# 改善13: ロールや共通の資料の見出しに、ジョブ名を書き足す
+
+ROLE_QUEST_HEADINGS = [
+    ["イベント関連", "クエスト関連", "新たなロールクエストが追加されます。", "≪タンク（ナイト／戦士／暗黒騎士／ガンブレイカー）≫"],
+    ["イベント関連", "クエスト関連", "新たなロールクエストが追加されます。", "≪ヒーラー（白魔道士／学者／占星術師／賢者）≫"],
+    # ジョブの一覧にない名前は入れない
+    ["イベント関連", "クエスト関連", "新たなロールクエストが追加されます。", "≪近接物理DPS（モンク／まだないジョブ）≫"],
+]
+ROLE_NAMES = {"ナイト", "戦士", "暗黒騎士", "ガンブレイカー", "白魔道士", "学者", "占星術師", "賢者", "モンク"}
+ROLES = role_jobs_from_headings(ROLE_QUEST_HEADINGS, ROLE_NAMES)
+HEALERS = "白魔道士／学者／占星術師／賢者"
+
+
+def test_role_jobs_from_role_quest_headings():
+    assert ROLES == {
+        "タンク": ["ナイト", "戦士", "暗黒騎士", "ガンブレイカー"],
+        "ヒーラー": ["白魔道士", "学者", "占星術師", "賢者"],
+        "近接物理DPS": ["モンク"],
+    }
+
+
+def test_label_role_heading_adds_jobs():
+    line = f"[パッチ7.1] バトル関連 > {ACTION} > ヒーラー"
+    assert label_role_heading(line, ROLES) == f"[パッチ7.1] バトル関連 > {ACTION} > ヒーラー（{HEALERS}）"
+
+
+def test_label_role_heading_reads_healer_in_english():
+    line = f"[パッチ7.25] バトル関連 > PvP全般 > {PVP_ACTION} > HEALER"
+    assert label_role_heading(line, ROLES) == f"[パッチ7.25] バトル関連 > PvP全般 > {PVP_ACTION} > HEALER（{HEALERS}）"
+
+
+def test_label_role_heading_common_only_when_exact():
+    line = f"[パッチ7.3] バトル関連 > PvP全般 > {PVP_ACTION} > 共通"
+    assert label_role_heading(line, ROLES) == f"[パッチ7.3] バトル関連 > PvP全般 > {PVP_ACTION} > 共通（すべてのジョブ）"
+    crafter = "[パッチ7.0] アイテム関連 > クラフターアクションにおいて、以下の調整が行われます。 > 全クラフタークラス共通"
+    assert label_role_heading(crafter, ROLES) == crafter
+
+
+def test_label_role_heading_keeps_job_heading():
+    line = f"[パッチ7.1] バトル関連 > {ACTION} > 白魔道士"
+    assert label_role_heading(line, ROLES) == line

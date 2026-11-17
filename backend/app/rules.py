@@ -146,6 +146,53 @@ def skills_in(question: str, names: set[str]) -> set[str]:
     return jobs_in(question, names)
 
 
+# 改善13: ロールクエストの見出し（例:「≪ヒーラー（白魔道士／学者／占星術師／賢者）≫」）
+ROLE_QUEST_HEADING = re.compile(r"^≪([^（≫]+)（([^）]+)）≫$")
+
+# ロールの名前の読み替え（ジョブの調整の見出しの書き方が、ロールクエストの見出しと違うもの）
+ROLE_ALIASES = {"HEALER": "ヒーラー"}
+
+# ジョブの調整の見出しの下の「共通」と、AI に渡すときの書き方
+COMMON_HEADING = "共通"
+COMMON_LABEL = "共通（すべてのジョブ）"
+
+
+def role_jobs_from_headings(headings_list: list[list[str]], names: set[str]) -> dict[str, list[str]]:
+    """「≪ロール名（ジョブ名／ジョブ名…）≫」の見出しから、ロールとジョブの対応を作る。
+
+    ジョブ名は、ジョブの一覧（names）にあるものだけを、見出しの並びのまま入れる。
+    ロールとジョブの対応をコードに書かずにデータから作るので、ロールクエストの見出しが増えれば入る。
+    """
+    roles: dict[str, list[str]] = {}
+    for headings in headings_list:
+        for heading in headings:
+            m = ROLE_QUEST_HEADING.match(heading.strip())
+            if not m:
+                continue
+            jobs = [j.strip() for j in m.group(2).split("／") if j.strip() in names]
+            if jobs:
+                roles.setdefault(m.group(1).strip(), jobs)
+    return roles
+
+
+def label_role_heading(line: str, roles: dict[str, list[str]]) -> str:
+    """見出しの行（「[パッチ7.1] … > ヒーラー」）の一番下の見出しに、ジョブ名を書き足した行を返す。
+
+    - 一番下の見出しがロール名（ROLE_ALIASES で読み替えたあと）なら「ヒーラー（白魔道士／学者／…）」にする
+    - ちょうど「共通」なら「共通（すべてのジョブ）」にする（「全クラフタークラス共通」などは変えない）
+    - それ以外はそのまま返す
+    """
+    head, sep, last = line.rpartition(" > ")
+    if not sep:
+        return line
+    if last == COMMON_HEADING:
+        return f"{head}{sep}{COMMON_LABEL}"
+    role = ROLE_ALIASES.get(last, last)
+    if role in roles:
+        return f"{head}{sep}{last}（{'／'.join(roles[role])}）"
+    return line
+
+
 def boosted_chunks(
     question: str,
     job: str | None,
