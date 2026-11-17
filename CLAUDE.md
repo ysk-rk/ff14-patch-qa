@@ -45,11 +45,12 @@ python scripts\count_other_jobs.py
 - 調べるためだけのスクリプトは `data/debug/` に置く（git に入らない）
 - 出力を見せるように頼まれたときは、そのまま data/debug/out.txt にも保存する（前の内容は上書きしてよい）。画面では省略されることがあるため 
 
-## 今の状態（2026-11-16 時点）
+## 今の状態（2026-11-17 時点）
 
-- 評価用の問題は64問（eval/questions.jsonl）。AI で測ったのは54問まで（lite 54/54）
-- テスト用の問題は今はない（eval/test_questions.jsonl はない）。次の改善の前に作る
+- 評価用の問題は68問（eval/questions.jsonl）。AI で測ったのは54問まで（lite 54/54）
+- テスト用の問題は r001〜r011（eval/test_questions.jsonl、PvP、11問）。ジョブ名がある質問で、正解がロールや共通の調整にある形の改善の最終形が決まるまで流さない。ほかの改善のテストには使わない
 - 検索は hybrid（意味の近さ ＋ BM25 を RRF で合わせ、質問のジョブと合う資料に JOB_BONUS = 1/61 を足す）
+- ROLE_SKILL_BOOST（改善12）と ROLE_HEADING_JOBS（改善13）は、どちらも False（試して取り消した。コードは残している）
 - 意味の近さの検索は VECTOR_INDEX = "pieces"（512トークンを超えるチャンクを、埋め込みのときだけ分けたもの）。"chunks" に戻せば前の動き
 - プロンプトは auto（経緯の質問は v4、今の値の質問は v5）
-- 自動テストは62個
+- 自動テストは76個
