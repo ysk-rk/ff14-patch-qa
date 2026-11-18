@@ -227,10 +227,10 @@ Boosting sources that match the question's job (section 10) could push the corre
 
 I studied 7.0, the closest thing in the current data, as a model for the next expansion, 8.0.
 
-- **What I found:** the job skill adjustments for 7.0 are not in the patch notes' text; they are behind a "see here" link to the Job Guide. As is, if 8.0 reworks skills, the app would **answer the last 7.x value as the current value**. No dev-set question had 7.0 as a required source, so the evaluation could not show this.
-- **Withholding the current value at an expansion boundary:** for a current-value question, if the patch behind the answer predates the latest expansion, the current value is replaced with "could not tell", with the reason, and the history is kept. The latest expansion is derived from the ingested patch versions.
+- **What I found:** the job skill adjustments for 7.0 are not in the patch notes' text; they are behind a "see here" link to the Job Guide. If 8.0 follows the same structure, the app would **answer the last 7.x value as the current value** even after skills are reworked. No dev-set question had 7.0 as a required source, so the evaluation could not show this.
+- **Withholding the current value at an expansion boundary:** for a current-value question about a job skill, if the patch behind the answer predates the latest expansion, the current value is replaced with "not found", with the reason, and the history is kept. The latest expansion is derived from the ingested patch versions.
 - **Taking every name from a new-job heading:** a heading like "new jobs 'Viper' 'Pictomancer'" used to yield only the first name. Fixed.
-- **How I checked:** with the current data (7.x only), neither change alters any answer. The effect is checked by automated tests on made-up 8.0 data, and the wiring into the real answer path was checked with saved answers, without calling the LLM (the 40 questions predicted to change were exactly the 40 that changed). The 8.0 ingestion runbook is in section 3.8 of the [design doc](docs/design.md) (Japanese).
+- **How I checked:** with the current data (7.x only), neither change alters any answer. The effect is checked by automated tests on made-up 8.0 data, and the wiring into the real answer path was checked with saved answers, without calling the LLM (when the latest expansion was set to 8, the 40 questions predicted to change were exactly the 40 that changed). The 8.0 ingestion runbook is in section 3.8 of the [design doc](docs/design.md) (Japanese).
 
 ## Running locally
 

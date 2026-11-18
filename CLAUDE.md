@@ -45,7 +45,7 @@ python scripts\count_other_jobs.py
 - 調べるためだけのスクリプトは `data/debug/` に置く（git に入らない）
 - 出力を見せるように頼まれたときは、そのまま data/debug/out.txt にも保存する（前の内容は上書きしてよい）。画面では省略されることがあるため 
 
-## 今の状態（2026-11-17 時点）
+## 今の状態（2026-11-18 時点）
 
 - 評価用の問題は68問（eval/questions.jsonl）。AI で測ったのは54問まで（lite 54/54）
 - テスト用の問題は r001〜r011（eval/test_questions.jsonl、PvP、11問）。ジョブ名がある質問で、正解がロールや共通の調整にある形の改善の最終形が決まるまで流さない。ほかの改善のテストには使わない
@@ -54,6 +54,7 @@ python scripts\count_other_jobs.py
 - 意味の近さの検索は VECTOR_INDEX = "pieces"（512トークンを超えるチャンクを、埋め込みのときだけ分けたもの）。"chunks" に戻せば前の動き
 - プロンプトは auto（経緯の質問は v4、今の値の質問は v5）
 - EXPANSION_GUARD（拡張パッケージの境目で今の値を控える）と NEW_JOB_ALL_NAMES（新しいジョブの見出しから名前をすべて取る）は、どちらも True（改善14。今のデータでは答えは変わらない）
+- EXPANSION_GUARD と NEW_JOB_ALL_NAMES は rules.py にある（ROLE_SKILL_BOOST などは rag.py）。切り替えは rules.py を直す
 - 8.0 を取り込むときは、設計書（docs/design.md）の 3.8 の手順書のとおりに進める
 - 改善の番号は、次は改善15（改善11 とぶつかって、改善14 に名前を変えたことがあるため）
 - 自動テストは93個
