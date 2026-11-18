@@ -1214,3 +1214,40 @@ AI を呼ぶ評価を流さない理由:
 分かっている課題:
 
 - 本物の 8.0 の見出しが、3つの書き方（「A」「B」、「A」と「B」、「A」、「B」。テストにはないが「・」も取れる）以外なら、2つ目からの名前は取れない
+
+## 改善14：練習A（1本足して作り直しても、前のチャンクが変わらないか）（流す前に書いた）
+
+調べて分かったこと（コードを読んだだけ。data/debug/practice_a_survey.txt）:
+
+- 取り込みは毎回すべて作り直す。足すしくみはない
+  - fetch_lodestone.py は、まだ保存していない版の HTML だけを取る
+  - extract_chunks.py は、PATCH_NOTES のすべての版を読み、chunks.jsonl を丸ごと書き直す
+  - build_index.py は、Chroma の2つのコレクションを消してから、すべてを埋め込み直す
+- 新しいパッチを足すときに書き直す所は、PATCH_NOTES に1行足すだけ。chunks.jsonl の行の順は PATCH_NOTES の辞書の順なので、最後に足すかぎり、今の行の順は変わらない
+- チャンクの ID は版ごとの通し番号（f"{version}-{i:04d}"）。ほかの版が増えても減っても、ID は変わらない
+- rag.py は import のときに、chunks.jsonl から BM25 の索引、job_names、chunk_jobs、role_skills、role_jobs、newest_expansion を作る。読む場所はコードに書いてあり、外から変えられない
+
+決めたこと:
+
+- 比べるのは「8.0 のときの本当の手順（PATCH_NOTES に1行足して、全部作り直す）で、前からあるパッチのチャンクが変わらないか」
+- 「後ろにつなげる」「collection.add で足す」は、2月に使わない手順なので作らない。索引の段階も、今回は比べない
+
+比べ方:
+
+- data/debug/practice_a.py で、extract_chunks.py の PATCH_NOTES と出力先をスクリプトの中だけで差し替え、7.57 を除いた22本で data/practice_a/build22/chunks.jsonl を作る。今の data/processed/chunks.jsonl と比べる
+- 本体のコードは変えない。今の data/processed と data/index は上書きしない
+- fetch_lodestone.py と build_index.py は流さない。AI は呼ばない。テスト用の問題は使わない
+
+完了の条件（結果を見る前に決める）:
+
+1. build22 の行が、今の chunks.jsonl から版が 7.57 の行を除いたものと、行の順も含めて1文字も同じ
+2. 今の chunks.jsonl の中で、版が 7.57 の行は最後にまとまっている（途中に混ざっていない）
+3. rules.py の関数で作るもの（job_names、chunk_jobs、role_skills、role_jobs、newest_expansion）を、build22 と今のもので比べる。違いがあれば、その違いが 7.57 のチャンクだけから来ていることを、ID で示せる
+4. pieces（split_for_embedding。トークナイザーだけ読む）の文と ID が、7.0〜7.56 の分で1文字も同じ
+- 1〜4 のどれかを満たさなければ、その違いを書き出して止める（直さない）
+
+言えないこと（先に書いておく）:
+
+- 索引（Chroma）の段階は比べていない。2月に作り直したあとで、68問の検索だけを流して前と比べることで確かめる
+- チャンクが同じでも、1本足すと BM25 の点数は前のチャンクでも変わる（言葉の珍しさが全体で決まるため）。8.0 を足したあとに 7.x の質問の検索の順位が変わることはありうる。これは壊れたのではなく、しくみとしてそうなる
+- 7.57 は今あるデータで、8.0 は拡張パッケージなので、8.0 の HTML の作りが違えば、extract_chunks.py がそのまま動くかは2月まで分からない
