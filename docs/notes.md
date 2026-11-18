@@ -1280,33 +1280,9 @@ AI を呼ぶ評価を流さない理由:
 分かっている課題:
 
 - data/index に、使っていない HNSW のフォルダが5つ残っている（10月のもの。前に消したコレクションの残りとみられる）。消していない
-- data/debug のスクリプト（count_new_job_names.py、compare_search_only.py など）は git に入っていない。2月に手順書で使うので、残っているかを先に確かめる
+- 手順書で使う data/debug のスクリプト（compare_search_only.py、count_new_job_names.py、count_expansion_guard.py）は git に入っていなかった。backend/scripts/ に移してコミットした（「改善14：8.0 の手順書で使うスクリプトを backend/scripts に移した」）。count_new_job_names.py は、all_names に False と True を直接渡して比べたもの（data/debug の count_new_job_names_explicit.txt を出したもの）を移した。移したあとに3つとも流し、data/debug のものと同じ結果になった。data/debug の元のファイルは消していない
 
 ### 8.0 の取り込みの手順書（案）
 
-今のしくみ（毎回すべて作り直す）に合わせたもの。backend で、.venv に入ってから流す。
-
-1. API（main.py）を止める。作り直しの途中の chunks.jsonl や data/index を読ませないため。rag.py は import のときにしか読まないので、止めずに作り直すと、再び立ち上げるまで古いデータのまま答える
-2. 今の data/processed と data/index を、別のフォルダに写しておく（必ず行う）。作り直しに失敗したときに戻すため。data/ は git に入っていないので、ほかに戻す手段がない
-3. fetch_lodestone.py の PATCH_NOTES の最後に、"8.0" の行を足す。途中に足さない（行の順がずれる）
-4. python scripts\fetch_lodestone.py。保存していない 8.0 の HTML だけを取る（7.x は取りに行かない）
-5. 保存した data/raw/lodestone/8.0.html の見出しの形を、練習B のように python scripts\outline.py 8.0 で出して目で確かめる。見るもの：
-   - 本文が div.news__detail__wrapper にあるか（ないと extract_chunks.py が「スキップ」と出す）
-   - 見出しのタグ（h3.mdl-title__ancher、h2、h3、h4、h5）の使い方が 7.0 と同じか
-   - 新しいジョブの見出しの書き方（「新たなジョブ「A」「B」が…」など、改善14 で取れる形か）
-   - ジョブの調整が本文にあるか、7.0 のように別のページ（jobguide）にあるか
-6. 評価用の68問の扱いを決める（結果を見る前に）。8.0 を入れると、EXPANSION_GUARD によって、今の値の質問の多くが『分かりませんでした』になる。今の正解は 7.x の値なので、今の採点ではこれらが✕になる。これは意図した動き。8.0 の HTML の作り（すぐ前の手順）だけを見て、チャンクを作る前に、どの問題の正解を『控える』に変えるかと、その理由を notes.md に書いてコミットする。結果を見てから正解を書き直さない
-   - 移した理由：検索だけの結果を見てから正解を決めないように、データの作りを見た時点で決める
-7. python scripts\extract_chunks.py。全部作り直す。版ごとのチャンクの数が、7.x は今と同じ数か（2925 ＋ 7.57 の7件）を確かめる
-8. 新しいジョブの名前が見出しから取れたかを、python scripts\count_new_job_names.py で確かめる（job_names の数が28個から増えたか。増えた名前が新しいジョブか）
-9. python -m pytest -q（自動テストは作り物のデータなので、通るはず。通らなければ止める）
-10. python scripts\build_index.py。全部作り直す（今のデータで2〜3分ほど。8.0 の分だけ長くなる）
-11. 68問の検索だけ（python scripts\run_eval.py --search-only）を流し、8.0 を足す前の結果と比べる（python scripts\compare_search_only.py 新しい結果 前の結果）
-    - 1本足すと BM25 の点数が前のチャンクでも変わるので、7.x の問題で順位が変わることはありうる。変わった問題は書き出し、上位8件から消えた資料がないかを見る。変わったことだけで「壊れた」とはしない
-12. EXPANSION_GUARD で今の値を控える問題の数を数える（python scripts\count_expansion_guard.py の形）。40問は、7.x の答えを拡張パッケージ 8 として流したときの数（練習のための数）。8.0 で変更が書かれたスキルは控えないので、実際の数はこれより少ないはず。数そのものより、控えた問題の根拠のパッチが 7.x で、8.0 に同じスキルの変更がないことを確かめる
-13. 8.0 の評価用の問題を、データの作り（見出しと本文）だけから作り、結果を見る前にコミットする。そのあとで検索だけ、AI での評価の順に流す
-14. API を立ち上げ直す（rag.py が新しい chunks.jsonl と data/index を読む）
-
-分かっている課題:
-
-- 手順書で使う data/debug のスクリプト（compare_search_only.py、count_new_job_names.py、count_expansion_guard.py など）は git に入っていない。2月までに backend/scripts/ に移してコミットする（ドキュメントの書き直しのときに行う）
+- 設計書に移した（docs/design.md の 3.8「8.0 の取り込みの手順書」）。これからは設計書のほうを直す
+- 手順書で使うスクリプトの話（分かっている課題）は、上の「練習A の結果」の分かっている課題に1か所にまとめた

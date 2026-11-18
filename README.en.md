@@ -104,6 +104,7 @@ Lodestone patch notes (23 pages)
   → choose a prompt from the question's wording: v5 for "current value", v4 for "what changed"
   → answer with an LLM (llm.py; currently Gemini, falling back to a lighter model when busy)
   → recompute the current value in code: take the "after" value of the newest patch in the history
+  → check the expansion boundary: if that patch predates the latest expansion, withhold the current value
 ```
 
 | Role | Tools |
@@ -222,6 +223,15 @@ Boosting sources that match the question's job (section 10) could push the corre
 - **Lesson:** with one run per question, I could not separate the effect from the smaller model's run-to-run variation. Next time I check something on only a few questions, I will decide before running how many times to run each one and how many correct answers count as an effect.
 - The code is kept but set to False, so either change can be retried by flipping one constant. The 11 held-out questions for this shape (PvP) have not been run yet.
 
+### 13. Preparing for 8.0 (releasing February 23, 2027)
+
+I studied 7.0, the closest thing in the current data, as a model for the next expansion, 8.0.
+
+- **What I found:** the job skill adjustments for 7.0 are not in the patch notes' text; they are behind a "see here" link to the Job Guide. As is, if 8.0 reworks skills, the app would **answer the last 7.x value as the current value**. No dev-set question had 7.0 as a required source, so the evaluation could not show this.
+- **Withholding the current value at an expansion boundary:** for a current-value question, if the patch behind the answer predates the latest expansion, the current value is replaced with "could not tell", with the reason, and the history is kept. The latest expansion is derived from the ingested patch versions.
+- **Taking every name from a new-job heading:** a heading like "new jobs 'Viper' 'Pictomancer'" used to yield only the first name. Fixed.
+- **How I checked:** with the current data (7.x only), neither change alters any answer. The effect is checked by automated tests on made-up 8.0 data, and the wiring into the real answer path was checked with saved answers, without calling the LLM (the 40 questions predicted to change were exactly the 40 that changed). The 8.0 ingestion runbook is in section 3.8 of the [design doc](docs/design.md) (Japanese).
+
 ## Running locally
 
 ### Requirements
@@ -282,7 +292,7 @@ python scripts\show_context.py "PvPのナイトのホーリースピリットの
 python scripts\count_other_jobs.py
 ```
 
-- `pytest` runs the automated tests (76) for the code that does not depend on the LLM or the data. No model or API key is needed.
+- `pytest` runs the automated tests (93) for the code that does not depend on the LLM or the data. No model or API key is needed.
 - `--search-only` measures retrieval without calling the LLM, so it does not use any API quota.
 - `show_context.py` prints the sources and prompt that would be sent to the LLM, without calling it. Useful for debugging a wrong answer.
 - `count_other_jobs.py` counts the other-job sources that appear in the top 8 search results.
@@ -304,7 +314,9 @@ python scripts\count_other_jobs.py
 - Grading only checks that the right numbers or patch numbers appear in the answer; it does not verify that the history itself is correct
 - The smaller model can miss different questions on different runs under the same settings
 - On the Gemini API free tier, busy servers (503) and rate limits (429) can prevent an answer
-- New patch notes are not ingested automatically
+- New patch notes are not ingested automatically. 8.0 will be ingested by following the runbook in the design doc
+- Values that are not in the patch notes' text cannot be answered. Values found only in the Job Guide, such as the 7.0 job skill adjustments, are not in the data
+- The structure of the 8.0 patch notes will not be known until February 2027. If it differs from 7.x, it is unverified whether the ingestion scripts still work and whether new job names are picked up
 
 ## Documentation (Japanese)
 
