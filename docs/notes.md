@@ -1251,3 +1251,56 @@ AI を呼ぶ評価を流さない理由:
 - 索引（Chroma）の段階は比べていない。2月に作り直したあとで、68問の検索だけを流して前と比べることで確かめる
 - チャンクが同じでも、1本足すと BM25 の点数は前のチャンクでも変わる（言葉の珍しさが全体で決まるため）。8.0 を足したあとに 7.x の質問の検索の順位が変わることはありうる。これは壊れたのではなく、しくみとしてそうなる
 - 7.57 は今あるデータで、8.0 は拡張パッケージなので、8.0 の HTML の作りが違えば、extract_chunks.py がそのまま動くかは2月まで分からない
+
+### 練習A の結果（AI は呼んでいない。ネットにも行っていない）
+
+流したもの:
+
+- data/debug/practice_a.py。extract_chunks.py の PATCH_NOTES（7.57 を除いた22本）と OUTPUT（data/practice_a/build22/chunks.jsonl）を、スクリプトの中だけで差し替えて main() を呼んだ。結果は data/debug/practice_a.txt
+- 条件3 は rag.py を import せず（Chroma を開くと data/index に書き込みが起きるため）、rag.py の文から build_chunk_jobs、build_role_skills、build_role_jobs、is_pvp_chunk の定義だけを取り出し、読むファイルを差し替えて同じ式で流した。newest_expansion は latest_expansion
+- 条件4 のトークン数は、build_index.py と同じモデル（intfloat/multilingual-e5-small）のトークナイザーだけを、手元のキャッシュから読んで数えた。MAX_TOKENS と PASSAGE_PREFIX は build_index.py の文から読んだ
+- 流す前と後で、data/processed/chunks.jsonl の中身（ハッシュ）と data/index/chroma.sqlite3 の時刻は変わっていない
+- fetch_lodestone.py と build_index.py は流していない。テスト用の問題は使っていない
+
+結果:
+
+1. build22 は 2925行。今の chunks.jsonl（2932行）から 7.57 の7行を除いたものと、違う行は0行。バイトでも同じ → 満たした
+2. 7.57 の行は 2926〜2932行目（7.57-0000〜7.57-0006）で、最後にまとまっている。版の並びは PATCH_NOTES の順 → 満たした
+3. job_names は28個で同じ。chunk_jobs は、両方にある2925件でジョブが違うものは0件で、今だけにある7件はすべて 7.57 の ID。role_skills（PvP 以外2件、PvP 12件）、all_skills（6284個）、role_jobs（5ロール）は同じで、7.57 のチャンクはどれにも入っていない。newest_expansion はどちらも 7 → 満たした
+4. 7.0〜7.56 のかけらは、どちらも 3387個で、ID か文が違うものは0個。参考：今の全体では 3395個で、build_log.txt の数と同じ → 満たした
+
+判定:
+
+- 完了の条件1〜4をすべて満たした。PATCH_NOTES の最後に1本足して全部作り直しても、前からあるパッチのチャンク、ID、rules.py の関数で作るもの、かけらは変わらない
+
+言えないこと（流す前に書いたもののほか）:
+
+- 7.57 は小さいパッチ（7件）で、新しいジョブもロールの調整もないので、条件3 の「違いが 7.57 から来ている」は、実際には違いが出ない形でしか確かめられていない。8.0 で名前やロールが増える形は、改善14 の自動テスト（作り物の 8.x のデータ）で確かめた分だけ
+
+分かっている課題:
+
+- data/index に、使っていない HNSW のフォルダが5つ残っている（10月のもの。前に消したコレクションの残りとみられる）。消していない
+- data/debug のスクリプト（count_new_job_names.py、compare_search_only.py など）は git に入っていない。2月に手順書で使うので、残っているかを先に確かめる
+
+### 8.0 の取り込みの手順書（案）
+
+今のしくみ（毎回すべて作り直す）に合わせたもの。backend で、.venv に入ってから流す。
+
+1. API（main.py）を止める。作り直しの途中の chunks.jsonl や data/index を読ませないため。rag.py は import のときにしか読まないので、止めずに作り直すと、再び立ち上げるまで古いデータのまま答える
+2. （案）今の data/processed と data/index を、別のフォルダに写しておく。作り直しに失敗したときに戻すため。git には入らないので、ほかに戻す手段がない
+3. fetch_lodestone.py の PATCH_NOTES の最後に、"8.0" の行を足す。途中に足さない（行の順がずれる）
+4. python scripts\fetch_lodestone.py。保存していない 8.0 の HTML だけを取る（7.x は取りに行かない）
+5. 保存した data/raw/lodestone/8.0.html の見出しの形を、練習B のように outline.py で出して目で確かめる。見るもの：
+   - 本文が div.news__detail__wrapper にあるか（ないと extract_chunks.py が「スキップ」と出す）
+   - 見出しのタグ（h3.mdl-title__ancher、h2、h3、h4、h5）の使い方が 7.0 と同じか
+   - 新しいジョブの見出しの書き方（「新たなジョブ「A」「B」が…」など、改善14 で取れる形か）
+   - ジョブの調整が本文にあるか、7.0 のように別のページ（jobguide）にあるか
+6. python scripts\extract_chunks.py。全部作り直す。版ごとのチャンクの数が、7.x は今と同じ数か（2925 ＋ 7.57 の7件）を確かめる
+7. 新しいジョブの名前が見出しから取れたかを、count_new_job_names.py などで確かめる（job_names の数が28個から増えたか。増えた名前が新しいジョブか）
+8. python -m pytest -q（自動テストは作り物のデータなので、通るはず。通らなければ止める）
+9. python scripts\build_index.py。全部作り直す（今のデータで2〜3分ほど。8.0 の分だけ長くなる）
+10. 68問の検索だけ（python scripts\run_eval.py --search-only）を流し、8.0 を足す前の結果と比べる（compare_search_only.py）
+    - 1本足すと BM25 の点数が前のチャンクでも変わるので、7.x の問題で順位が変わることはありうる。変わった問題は書き出し、上位8件から消えた資料がないかを見る。変わったことだけで「壊れた」とはしない
+11. EXPANSION_GUARD で今の値を控える問題の数を数える（count_expansion_guard.py の形。拡張パッケージ 8 として流したときの、経緯のある40問が目安）
+12. 8.0 の評価用の問題を、データの作り（見出しと本文）だけから作り、結果を見る前にコミットする。そのあとで検索だけ、AI での評価の順に流す
+13. API を立ち上げ直す（rag.py が新しい chunks.jsonl と data/index を読む）
